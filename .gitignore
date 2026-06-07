@@ -1,0 +1,45 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# YOLO & PyTorch Datasets
+dataset/
+datasets/
+*.pt
+*.onnx
+*.engine
+
+# YOLO Run Logs and Weights
+runs/
+*.log
+
+# Python Caches & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# IDE & Editor Configs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+
+# OS Files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+samples
+snapshots
