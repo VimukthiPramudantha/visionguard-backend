@@ -11,6 +11,10 @@ import shutil
 import torch
 from ultralytics import YOLO
 
+# Absolute path to the project root (parent of this script's directory)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_OUTPUT = os.path.join(_PROJECT_ROOT, "runs", "detect")
+
 def check_paths():
     """Verify that dataset and data.yaml exist before starting."""
     yaml_path = os.path.join("dataset", "data.yaml")
@@ -35,6 +39,8 @@ def main():
     parser.add_argument("--lr0", type=float, default=0.01, help="Initial learning rate")
     parser.add_argument("--device", type=str, default="auto", help="Execution device: '0', 'cpu', or 'auto'")
     parser.add_argument("--resume", action="store_true", help="Resume training from last checkpoint")
+    parser.add_argument("--project", type=str, default=_DEFAULT_OUTPUT, help="Absolute root folder for training output (default: <project_root>/runs/detect)")
+    parser.add_argument("--name", type=str, default="train", help="Sub-folder name inside --project (default: train)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -76,6 +82,8 @@ def main():
     print("-" * 60)
     
     try:
+        abs_project = os.path.abspath(args.project)
+        print(f"[*] Training output directory: {os.path.join(abs_project, args.name)}")
         results = model.train(
             data=yaml_config,
             epochs=args.epochs,
@@ -84,12 +92,14 @@ def main():
             device=device,
             lr0=args.lr0,
             resume=args.resume,
+            project=abs_project,
+            name=args.name,
             plots=True
         )
         print("[+] Training completed successfully!")
         
         # 4. Copy best.pt weights to models/trained/best.pt as a permanent backup
-        best_run_path = os.path.join("runs", "detect", "train", "weights", "best.pt")
+        best_run_path = os.path.join(abs_project, args.name, "weights", "best.pt")
         dest_trained_dir = os.path.join("models", "trained")
         dest_best_path = os.path.join(dest_trained_dir, "best.pt")
         
