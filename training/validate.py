@@ -25,10 +25,8 @@ def main():
     print(f"         YOLO v11 Model Evaluation Tool ({args.split.upper()} Split)")
     print("=" * 60)
 
-    # 1. Resolve weight file path
     weights_path = args.weights
     if not os.path.exists(weights_path):
-        # Check alternative location
         alt_path = os.path.join("models", "trained", "best.pt")
         if os.path.exists(alt_path):
             weights_path = alt_path
@@ -36,11 +34,10 @@ def main():
             print(f"[-] Error: Could not locate weight file at path: {args.weights}")
             print("    Please run training first, or specify the correct weight file using --weights.")
             sys.exit(1)
-
+ 
     print(f"[*] Loading model weights from: {weights_path}")
     model = YOLO(weights_path)
 
-    # 2. Run Validation
     yaml_config = os.path.join("dataset", "data.yaml")
     if not os.path.exists(yaml_config):
         print(f"[-] Error: Dataset config data.yaml not found at: {yaml_config}")
@@ -50,7 +47,6 @@ def main():
     print("-" * 60)
 
     try:
-        # Run validation
         results = model.val(
             data=yaml_config,
             split=args.split,
@@ -59,8 +55,7 @@ def main():
             device=args.device,
             plots=True
         )
-        
-        # 3. Print a beautiful tabular metric log to console
+
         print("\n" + "=" * 65)
         print("                 CLASS-WISE EVALUATION SUMMARY")
         print("=" * 65)
