@@ -60,7 +60,7 @@ class VisionGuardDetector:
                 output_file = save_path / f"detected_{timestamp}_{img_file.name}"
                 annotated = results.plot()
                 cv2.imwrite(str(output_file), annotated)
-                print(f"    ✅ SAVED: {output_file.name}")
+                print(f"    SAVED: {output_file.name}")
             else:
                 print("    → No detections")
 
