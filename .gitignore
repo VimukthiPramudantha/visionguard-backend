@@ -12,7 +12,7 @@ datasets/
 *.engine
 
 # YOLO Run Logs and Weights
-runs/
+# runs/
 *.log
 
 # Python Caches & Bytecode
