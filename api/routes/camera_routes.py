@@ -36,6 +36,15 @@ async def get_local_webcams():
                 "status": "online"
             })
             cap.release()
+    # Fallback simulated camera if no physical webcams are connected
+    if not cameras:
+        cameras.append({
+            "id": 0,
+            "name": "Simulated Webcam (Demo)",
+            "type": "webcam",
+            "url": "webcam:0 (Demo)",
+            "status": "online"
+        })
     return cameras
 
 
