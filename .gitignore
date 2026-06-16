@@ -1,7 +1,7 @@
 # Virtual Environments
 venv/
 .venv/
-env/
+.env
 ENV/
 
 # YOLO & PyTorch Datasets
