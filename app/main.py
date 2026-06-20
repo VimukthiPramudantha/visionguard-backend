@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 
 # Import routers
 from app.api.routers.auth_router import router as auth_router
-from app.api.routers.camera_routes import router as camera_router
+from app.api.camera_routes import router as camera_router
 
 app = FastAPI(title="VisionGuard")
 

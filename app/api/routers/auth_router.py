@@ -17,7 +17,7 @@ def verify_password(plain_password: str, hashed_password: str):
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserCreate):
     # Check if user exists
-    existing = supabase.table("users").select("*").eq("email", user.email).execute()
+    existing = supabase.table("users").select("id").eq("email", user.email).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -25,11 +25,9 @@ async def register(user: UserCreate):
 
     new_user = {
         "full_name": user.full_name,
-        "email": user.email,
+        "email": user.email.lower(),
         "password_hash": hashed_password,
         "role": user.role,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat()
     }
 
     response = supabase.table("users").insert(new_user).execute()
@@ -37,8 +35,8 @@ async def register(user: UserCreate):
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-    created_user = response.data[0]
-    return {**created_user, "password_hash": None}  # Don't return hash
+    created = response.data[0]
+    return {**created, "password_hash": None}
 
 
 @router.post("/login")
