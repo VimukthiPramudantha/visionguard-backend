@@ -23,7 +23,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserCreate):
-    # Check if email already exists
+    
     existing = supabase.table("users").select("id").eq("email", user.email.lower()).execute()
     
     if existing.data:

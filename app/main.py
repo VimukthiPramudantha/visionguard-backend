@@ -1,7 +1,14 @@
 # main.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
 from app.api.routers.auth_router import router as auth_router
-from app.middleware import init_middleware
 
 try:
     from app.api.routers.camera_routes import router as camera_router
@@ -14,7 +21,14 @@ except ImportError:
 
 app = FastAPI(title="VisionGuard")
 
-init_middleware(app)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 
