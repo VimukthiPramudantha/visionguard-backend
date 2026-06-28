@@ -9,9 +9,9 @@ router = APIRouter()
 class Camera(BaseModel):
     id: str
     name: str
-    type: str          # "rtsp", "usb", "ip"
+    type: str  
     url: Optional[str] = None
-    status: str        # "online", "offline", "error"
+    status: str
     last_active: Optional[str] = None
     location: Optional[str] = None
 
@@ -21,19 +21,16 @@ class CameraCreate(BaseModel):
     url: Optional[str] = None
     location: Optional[str] = None
 
-# A simple list of manually added cameras stored in memory
 _in_memory_cameras = {}
 active_feeds = set()
 
 def get_detected_cameras() -> List[Camera]:
     detected = []
     
-    # 1. Try to scan physical USB cameras using OpenCV
     try:
         import cv2
-        for index in range(3):  # Check indices 0, 1, 2
+        for index in range(3):  
             cam_id = f"usb_{index}"
-            # If this camera is currently streaming, it is definitely online/connected
             if cam_id in active_feeds:
                 detected.append(Camera(
                     id=cam_id,
@@ -46,7 +43,6 @@ def get_detected_cameras() -> List[Camera]:
                 ))
                 continue
 
-            # Otherwise, test-open it using default backend (no CAP_DSHOW to avoid exceptions)
             cap = cv2.VideoCapture(index)
             if cap.isOpened():
                 detected.append(Camera(
@@ -62,12 +58,10 @@ def get_detected_cameras() -> List[Camera]:
     except Exception as e:
         print(f"Error scanning local webcams: {e}")
         
-    # 2. Add any manually added cameras (stored in memory)
     for cam_id, cam in _in_memory_cameras.items():
         if not any(d.id == cam_id for d in detected):
             detected.append(cam)
             
-    # 3. Fallback to at least one simulated camera if absolutely nothing is connected
     if not detected:
         detected.append(Camera(
             id="simulated_0",
@@ -143,7 +137,7 @@ async def get_camera_feed(camera_id: str):
                     frame_bytes = buffer.tobytes()
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                    time.sleep(0.04)  # ~25 FPS
+                    time.sleep(0.04)  
             else:
                 try:
                     val = int(camera.url)
@@ -152,7 +146,6 @@ async def get_camera_feed(camera_id: str):
                 
                 cap = cv2.VideoCapture(val)
                 if not cap.isOpened():
-                    # Fallback to simulated pattern if opening webcam fails
                     width, height = 640, 480
                     while True:
                         img = np.zeros((height, width, 3), dtype=np.uint8)
