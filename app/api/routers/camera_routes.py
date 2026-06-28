@@ -23,6 +23,7 @@ class CameraCreate(BaseModel):
 
 # A simple list of manually added cameras stored in memory
 _in_memory_cameras = {}
+active_feeds = set()
 
 def get_detected_cameras() -> List[Camera]:
     detected = []
@@ -31,9 +32,23 @@ def get_detected_cameras() -> List[Camera]:
     try:
         import cv2
         for index in range(3):  # Check indices 0, 1, 2
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) if hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(index)
+            cam_id = f"usb_{index}"
+            # If this camera is currently streaming, it is definitely online/connected
+            if cam_id in active_feeds:
+                detected.append(Camera(
+                    id=cam_id,
+                    name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
+                    type="usb",
+                    url=str(index),
+                    status="online",
+                    last_active=datetime.utcnow().isoformat(),
+                    location="Local Host"
+                ))
+                continue
+
+            # Otherwise, test-open it using default backend (no CAP_DSHOW to avoid exceptions)
+            cap = cv2.VideoCapture(index)
             if cap.isOpened():
-                cam_id = f"usb_{index}"
                 detected.append(Camera(
                     id=cam_id,
                     name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
@@ -110,57 +125,60 @@ async def get_camera_feed(camera_id: str):
     is_simulated = (camera.id == "simulated_0")
 
     def gen_frames():
-        if is_simulated:
-            width, height = 640, 480
-            while True:
-                img = np.zeros((height, width, 3), dtype=np.uint8)
-                t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(img, "VisionGuard Feed", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
-                cv2.putText(img, "SIMULATED LIVE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
-                cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (34, 197, 94), 2)
-                
-                # Draw a simulated scanning line or object
-                y = int(240 + 80 * np.sin(time.time() * 2))
-                cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
-                
-                ret, buffer = cv2.imencode('.jpg', img)
-                frame_bytes = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                time.sleep(0.04)  # ~25 FPS
-        else:
-            try:
-                val = int(camera.url)
-            except ValueError:
-                val = camera.url
-            
-            cap = cv2.VideoCapture(val, cv2.CAP_DSHOW) if isinstance(val, int) and hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(val)
-            if not cap.isOpened():
-                # Fallback to simulated pattern if opening webcam fails
+        active_feeds.add(camera_id)
+        try:
+            if is_simulated:
                 width, height = 640, 480
                 while True:
                     img = np.zeros((height, width, 3), dtype=np.uint8)
                     t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cv2.putText(img, camera.name, (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
-                    cv2.putText(img, "CAMERA UNREACHABLE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (239, 68, 68), 2)
-                    cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 116, 139), 2)
+                    cv2.putText(img, "VisionGuard Feed", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                    cv2.putText(img, "SIMULATED LIVE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
+                    cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (34, 197, 94), 2)
+                    
+                    y = int(240 + 80 * np.sin(time.time() * 2))
+                    cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
                     
                     ret, buffer = cv2.imencode('.jpg', img)
+                    frame_bytes = buffer.tobytes()
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                    time.sleep(0.04)
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    time.sleep(0.04)  # ~25 FPS
             else:
                 try:
+                    val = int(camera.url)
+                except ValueError:
+                    val = camera.url
+                
+                cap = cv2.VideoCapture(val)
+                if not cap.isOpened():
+                    # Fallback to simulated pattern if opening webcam fails
+                    width, height = 640, 480
                     while True:
-                        success, frame = cap.read()
-                        if not success:
-                            break
-                        ret, buffer = cv2.imencode('.jpg', frame)
-                        if not ret:
-                            continue
+                        img = np.zeros((height, width, 3), dtype=np.uint8)
+                        t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        cv2.putText(img, camera.name, (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                        cv2.putText(img, "CAMERA UNREACHABLE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (239, 68, 68), 2)
+                        cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 116, 139), 2)
+                        
+                        ret, buffer = cv2.imencode('.jpg', img)
                         yield (b'--frame\r\n'
                                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                finally:
-                    cap.release()
+                        time.sleep(0.04)
+                else:
+                    try:
+                        while True:
+                            success, frame = cap.read()
+                            if not success:
+                                break
+                            ret, buffer = cv2.imencode('.jpg', frame)
+                            if not ret:
+                                continue
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    finally:
+                        cap.release()
+        finally:
+            active_feeds.discard(camera_id)
 
     return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
