@@ -94,3 +94,73 @@ async def get_camera(camera_id: str):
         if cam.id == camera_id:
             return cam
     raise HTTPException(status_code=404, detail="Camera not found")
+
+@router.get("/cameras/{camera_id}/feed")
+async def get_camera_feed(camera_id: str):
+    from fastapi.responses import StreamingResponse
+    import cv2
+    import numpy as np
+    import time
+
+    cameras = get_detected_cameras()
+    camera = next((c for c in cameras if c.id == camera_id), None)
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    is_simulated = (camera.id == "simulated_0")
+
+    def gen_frames():
+        if is_simulated:
+            width, height = 640, 480
+            while True:
+                img = np.zeros((height, width, 3), dtype=np.uint8)
+                t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(img, "VisionGuard Feed", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                cv2.putText(img, "SIMULATED LIVE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
+                cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (34, 197, 94), 2)
+                
+                # Draw a simulated scanning line or object
+                y = int(240 + 80 * np.sin(time.time() * 2))
+                cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', img)
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                time.sleep(0.04)  # ~25 FPS
+        else:
+            try:
+                val = int(camera.url)
+            except ValueError:
+                val = camera.url
+            
+            cap = cv2.VideoCapture(val, cv2.CAP_DSHOW) if isinstance(val, int) and hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(val)
+            if not cap.isOpened():
+                # Fallback to simulated pattern if opening webcam fails
+                width, height = 640, 480
+                while True:
+                    img = np.zeros((height, width, 3), dtype=np.uint8)
+                    t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cv2.putText(img, camera.name, (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                    cv2.putText(img, "CAMERA UNREACHABLE", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (239, 68, 68), 2)
+                    cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 116, 139), 2)
+                    
+                    ret, buffer = cv2.imencode('.jpg', img)
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    time.sleep(0.04)
+            else:
+                try:
+                    while True:
+                        success, frame = cap.read()
+                        if not success:
+                            break
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        if not ret:
+                            continue
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                finally:
+                    cap.release()
+
+    return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
