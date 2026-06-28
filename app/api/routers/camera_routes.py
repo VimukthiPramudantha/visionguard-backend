@@ -3,66 +3,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from app.core.supabase import supabase
 
 router = APIRouter()
-
-def detect_and_sync_usb_cameras():
-    try:
-        import cv2
-    except ImportError:
-        print("OpenCV (cv2) is not installed. Skipping local camera check.")
-        return
-
-    try:
-        # Detect connected USB cameras
-        connected_indices = []
-        for index in range(3):  # Check indices 0, 1, 2
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) if hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(index)
-            if cap.isOpened():
-                connected_indices.append(index)
-                cap.release()
-        
-        # Get existing cameras from database
-        db_response = supabase.table("cameras").select("*").execute()
-        existing_cameras = db_response.data or []
-        
-        # Map existing cameras by their URL (e.g. "0", "1") for USB type
-        existing_usb_map = {cam["url"]: cam for cam in existing_cameras if cam.get("type") == "usb"}
-        
-        detected_urls = [str(idx) for idx in connected_indices]
-        
-        # 1. Update/Insert detected cameras
-        for idx in connected_indices:
-            url_str = str(idx)
-            if url_str in existing_usb_map:
-                cam = existing_usb_map[url_str]
-                if cam.get("status") != "online":
-                    supabase.table("cameras").update({
-                        "status": "online",
-                        "last_active": datetime.utcnow().isoformat()
-                    }).eq("id", cam["id"]).execute()
-            else:
-                new_cam = {
-                    "name": f"Integrated Camera {idx}" if idx == 0 else f"USB Camera {idx}",
-                    "type": "usb",
-                    "url": url_str,
-                    "location": "Local Host",
-                    "status": "online",
-                    "last_active": datetime.utcnow().isoformat()
-                }
-                supabase.table("cameras").insert(new_cam).execute()
-        
-        # 2. Update offline cameras (type 'usb' but not detected)
-        for url_str, cam in existing_usb_map.items():
-            if url_str not in detected_urls:
-                if cam.get("status") != "offline":
-                    supabase.table("cameras").update({
-                        "status": "offline"
-                    }).eq("id", cam["id"]).execute()
-                    
-    except Exception as e:
-        print(f"Error detecting/syncing USB cameras: {e}")
 
 class Camera(BaseModel):
     id: str
@@ -79,37 +21,76 @@ class CameraCreate(BaseModel):
     url: Optional[str] = None
     location: Optional[str] = None
 
+# A simple list of manually added cameras stored in memory
+_in_memory_cameras = {}
+
+def get_detected_cameras() -> List[Camera]:
+    detected = []
+    
+    # 1. Try to scan physical USB cameras using OpenCV
+    try:
+        import cv2
+        for index in range(3):  # Check indices 0, 1, 2
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) if hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(index)
+            if cap.isOpened():
+                cam_id = f"usb_{index}"
+                detected.append(Camera(
+                    id=cam_id,
+                    name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
+                    type="usb",
+                    url=str(index),
+                    status="online",
+                    last_active=datetime.utcnow().isoformat(),
+                    location="Local Host"
+                ))
+                cap.release()
+    except Exception as e:
+        print(f"Error scanning local webcams: {e}")
+        
+    # 2. Add any manually added cameras (stored in memory)
+    for cam_id, cam in _in_memory_cameras.items():
+        if not any(d.id == cam_id for d in detected):
+            detected.append(cam)
+            
+    # 3. Fallback to at least one simulated camera if absolutely nothing is connected
+    if not detected:
+        detected.append(Camera(
+            id="simulated_0",
+            name="Integrated Camera 0 (Simulated)",
+            type="usb",
+            url="0",
+            status="online",
+            last_active=datetime.utcnow().isoformat(),
+            location="Simulated Environment"
+        ))
+        
+    return detected
+
 @router.get("/cameras", response_model=List[Camera])
 async def get_all_cameras():
     """Get all cameras"""
-    detect_and_sync_usb_cameras()
-    response = supabase.table("cameras").select("*").order("created_at", desc=True).execute()
-    return response.data or []
-
+    return get_detected_cameras()
 
 @router.post("/cameras", response_model=Camera)
 async def add_camera(camera: CameraCreate):
-    """Add new camera"""
-    new_camera = {
-        "name": camera.name,
-        "type": camera.type,
-        "url": camera.url,
-        "location": camera.location,
-        "status": "offline",
-        "last_active": datetime.utcnow().isoformat()
-    }
+    """Add new camera to memory (no database)"""
+    cam_id = f"custom_{len(_in_memory_cameras) + 1}"
+    new_cam = Camera(
+        id=cam_id,
+        name=camera.name,
+        type=camera.type,
+        url=camera.url or "0",
+        location=camera.location or "Custom Location",
+        status="online",
+        last_active=datetime.utcnow().isoformat()
+    )
+    _in_memory_cameras[cam_id] = new_cam
+    return new_cam
 
-    response = supabase.table("cameras").insert(new_camera).execute()
-
-    if not response.data:
-        raise HTTPException(status_code=500, detail="Failed to add camera")
-
-    return response.data[0]
-
-
-@router.get("/cameras/{camera_id}")
+@router.get("/cameras/{camera_id}", response_model=Camera)
 async def get_camera(camera_id: str):
-    response = supabase.table("cameras").select("*").eq("id", camera_id).execute()
-    if not response.data:
-        raise HTTPException(status_code=404, detail="Camera not found")
-    return response.data[0]
+    cameras = get_detected_cameras()
+    for cam in cameras:
+        if cam.id == camera_id:
+            return cam
+    raise HTTPException(status_code=404, detail="Camera not found")
