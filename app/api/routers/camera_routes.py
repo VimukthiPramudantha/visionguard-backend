@@ -7,6 +7,63 @@ from app.core.supabase import supabase
 
 router = APIRouter()
 
+def detect_and_sync_usb_cameras():
+    try:
+        import cv2
+    except ImportError:
+        print("OpenCV (cv2) is not installed. Skipping local camera check.")
+        return
+
+    try:
+        # Detect connected USB cameras
+        connected_indices = []
+        for index in range(3):  # Check indices 0, 1, 2
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) if hasattr(cv2, 'CAP_DSHOW') else cv2.VideoCapture(index)
+            if cap.isOpened():
+                connected_indices.append(index)
+                cap.release()
+        
+        # Get existing cameras from database
+        db_response = supabase.table("cameras").select("*").execute()
+        existing_cameras = db_response.data or []
+        
+        # Map existing cameras by their URL (e.g. "0", "1") for USB type
+        existing_usb_map = {cam["url"]: cam for cam in existing_cameras if cam.get("type") == "usb"}
+        
+        detected_urls = [str(idx) for idx in connected_indices]
+        
+        # 1. Update/Insert detected cameras
+        for idx in connected_indices:
+            url_str = str(idx)
+            if url_str in existing_usb_map:
+                cam = existing_usb_map[url_str]
+                if cam.get("status") != "online":
+                    supabase.table("cameras").update({
+                        "status": "online",
+                        "last_active": datetime.utcnow().isoformat()
+                    }).eq("id", cam["id"]).execute()
+            else:
+                new_cam = {
+                    "name": f"Integrated Camera {idx}" if idx == 0 else f"USB Camera {idx}",
+                    "type": "usb",
+                    "url": url_str,
+                    "location": "Local Host",
+                    "status": "online",
+                    "last_active": datetime.utcnow().isoformat()
+                }
+                supabase.table("cameras").insert(new_cam).execute()
+        
+        # 2. Update offline cameras (type 'usb' but not detected)
+        for url_str, cam in existing_usb_map.items():
+            if url_str not in detected_urls:
+                if cam.get("status") != "offline":
+                    supabase.table("cameras").update({
+                        "status": "offline"
+                    }).eq("id", cam["id"]).execute()
+                    
+    except Exception as e:
+        print(f"Error detecting/syncing USB cameras: {e}")
+
 class Camera(BaseModel):
     id: str
     name: str
@@ -25,6 +82,7 @@ class CameraCreate(BaseModel):
 @router.get("/cameras", response_model=List[Camera])
 async def get_all_cameras():
     """Get all cameras"""
+    detect_and_sync_usb_cameras()
     response = supabase.table("cameras").select("*").order("created_at", desc=True).execute()
     return response.data or []
 
