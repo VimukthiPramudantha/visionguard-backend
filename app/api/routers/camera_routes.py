@@ -43,17 +43,20 @@ def get_detected_cameras() -> List[Camera]:
                 ))
                 continue
 
-            cap = cv2.VideoCapture(index)
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) 
             if cap.isOpened():
-                detected.append(Camera(
-                    id=cam_id,
-                    name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
-                    type="usb",
-                    url=str(index),
-                    status="online",
-                    last_active=datetime.utcnow().isoformat(),
-                    location="Local Host"
-                ))
+                
+                success, _ = cap.read()
+                if success:
+                    detected.append(Camera(
+                        id=cam_id,
+                        name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
+                        type="usb",
+                        url=str(index),
+                        status="online",
+                        last_active=datetime.utcnow().isoformat(),
+                        location="Local Host"
+                    ))
                 cap.release()
     except Exception as e:
         print(f"Error scanning local webcams: {e}")
@@ -62,17 +65,6 @@ def get_detected_cameras() -> List[Camera]:
         if not any(d.id == cam_id for d in detected):
             detected.append(cam)
             
-    if not detected:
-        detected.append(Camera(
-            id="simulated_0",
-            name="Integrated Camera 0 (Simulated)",
-            type="usb",
-            url="0",
-            status="online",
-            last_active=datetime.utcnow().isoformat(),
-            location="Simulated Environment"
-        ))
-        
     return detected
 
 @router.get("/cameras", response_model=List[Camera])
