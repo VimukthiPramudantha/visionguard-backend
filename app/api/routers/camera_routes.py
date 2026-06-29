@@ -43,20 +43,24 @@ def get_detected_cameras() -> List[Camera]:
                 ))
                 continue
 
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) 
+            cap = cv2.VideoCapture(index, cv2.CAP_MSMF) 
             if cap.isOpened():
                 
-                success, _ = cap.read()
-                if success:
-                    detected.append(Camera(
-                        id=cam_id,
-                        name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
-                        type="usb",
-                        url=str(index),
-                        status="online",
-                        last_active=datetime.utcnow().isoformat(),
-                        location="Local Host"
-                    ))
+                success, frame = cap.read()
+                
+                if success and frame is not None and frame.size > 0:
+                    import numpy as np
+                    std_dev = np.std(frame)
+                    if std_dev > 2.0:
+                        detected.append(Camera(
+                            id=cam_id,
+                            name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
+                            type="usb",
+                            url=str(index),
+                            status="online",
+                            last_active=datetime.utcnow().isoformat(),
+                            location="Local Host"
+                        ))
                 cap.release()
     except Exception as e:
         print(f"Error scanning local webcams: {e}")
