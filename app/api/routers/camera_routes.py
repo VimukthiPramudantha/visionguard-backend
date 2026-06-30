@@ -155,7 +155,6 @@ async def get_camera_feed(camera_id: str):
                     cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
                     
                     if model:
-                        # Use a lower confidence threshold for custom trained models to ensure objects like 'person' trigger
                         results = model(img, conf=0.25, iou=0.45, verbose=False)
                         img = results[0].plot()
 
@@ -170,11 +169,7 @@ async def get_camera_feed(camera_id: str):
                 except ValueError:
                     val = camera.url
                 
-                # If it's a local USB camera, enforce MSMF to avoid DSHOW crashes/phantom locks
-                if camera.type == "usb":
-                    cap = cv2.VideoCapture(val, cv2.CAP_MSMF)
-                else:
-                    cap = cv2.VideoCapture(val)
+                cap = cv2.VideoCapture(val, cv2.CAP_MSMF)
                     
                 if not cap.isOpened():
                     width, height = 640, 480
@@ -197,7 +192,6 @@ async def get_camera_feed(camera_id: str):
                                 break
                             
                             if model:
-                                # Use a lower confidence threshold for custom trained models to ensure objects like 'person' trigger
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
                                 frame = results[0].plot()
 
