@@ -100,6 +100,28 @@ async def get_camera(camera_id: str):
             return cam
     raise HTTPException(status_code=404, detail="Camera not found")
 
+# Global variable for YOLO model to avoid reloading
+_yolo_model = None
+def get_yolo_model():
+    global _yolo_model
+    if _yolo_model is None:
+        try:
+            from ultralytics import YOLO
+            model_path = r"d:\Projects\VisionGuard\visionguard-backend\runs\detect\train\weights\best.pt"
+            import os
+            if os.path.exists(model_path):
+                _yolo_model = YOLO(model_path)
+            else:
+                print(f"YOLO model not found at {model_path}")
+                _yolo_model = False
+        except ImportError:
+            print("ultralytics not installed.")
+            _yolo_model = False
+        except Exception as e:
+            print(f"Failed to load YOLO: {e}")
+            _yolo_model = False
+    return _yolo_model if _yolo_model is not False else None
+
 @router.get("/cameras/{camera_id}/feed")
 async def get_camera_feed(camera_id: str):
     from fastapi.responses import StreamingResponse
@@ -117,6 +139,7 @@ async def get_camera_feed(camera_id: str):
     def gen_frames():
         active_feeds.add(camera_id)
         try:
+            model = get_yolo_model()
             if is_simulated:
                 width, height = 640, 480
                 while True:
@@ -129,6 +152,10 @@ async def get_camera_feed(camera_id: str):
                     y = int(240 + 80 * np.sin(time.time() * 2))
                     cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
                     
+                    if model:
+                        results = model(img, verbose=False)
+                        img = results[0].plot()
+
                     ret, buffer = cv2.imencode('.jpg', img)
                     frame_bytes = buffer.tobytes()
                     yield (b'--frame\r\n'
@@ -160,6 +187,11 @@ async def get_camera_feed(camera_id: str):
                             success, frame = cap.read()
                             if not success:
                                 break
+                            
+                            if model:
+                                results = model(frame, verbose=False)
+                                frame = results[0].plot()
+
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
                                 continue
