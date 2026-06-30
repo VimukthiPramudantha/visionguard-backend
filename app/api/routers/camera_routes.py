@@ -100,7 +100,6 @@ async def get_camera(camera_id: str):
             return cam
     raise HTTPException(status_code=404, detail="Camera not found")
 
-# Global variable for YOLO model to avoid reloading
 _yolo_model = None
 def get_yolo_model():
     global _yolo_model
@@ -114,8 +113,11 @@ def get_yolo_model():
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
-        except ImportError:
-            print("ultralytics not installed.")
+        except ImportError as e:
+            import sys
+            print(f"ultralytics import failed: {e}")
+            print(f"Python path: {sys.path}")
+            print(f"Python executable: {sys.executable}")
             _yolo_model = False
         except Exception as e:
             print(f"Failed to load YOLO: {e}")
@@ -153,7 +155,8 @@ async def get_camera_feed(camera_id: str):
                     cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
                     
                     if model:
-                        results = model(img, verbose=False)
+                        # Use a lower confidence threshold for custom trained models to ensure objects like 'person' trigger
+                        results = model(img, conf=0.25, iou=0.45, verbose=False)
                         img = results[0].plot()
 
                     ret, buffer = cv2.imencode('.jpg', img)
@@ -167,7 +170,12 @@ async def get_camera_feed(camera_id: str):
                 except ValueError:
                     val = camera.url
                 
-                cap = cv2.VideoCapture(val)
+                # If it's a local USB camera, enforce MSMF to avoid DSHOW crashes/phantom locks
+                if camera.type == "usb":
+                    cap = cv2.VideoCapture(val, cv2.CAP_MSMF)
+                else:
+                    cap = cv2.VideoCapture(val)
+                    
                 if not cap.isOpened():
                     width, height = 640, 480
                     while True:
@@ -189,7 +197,8 @@ async def get_camera_feed(camera_id: str):
                                 break
                             
                             if model:
-                                results = model(frame, verbose=False)
+                                # Use a lower confidence threshold for custom trained models to ensure objects like 'person' trigger
+                                results = model(frame, conf=0.25, iou=0.45, verbose=False)
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
