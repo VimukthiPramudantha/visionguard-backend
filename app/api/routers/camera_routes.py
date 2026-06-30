@@ -110,6 +110,11 @@ def get_yolo_model():
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
+                
+                # Override the class names: the user requested that class 0 ('bicycle') 
+                # be displayed as 'person' when detected.
+                if hasattr(_yolo_model, 'names') and 0 in _yolo_model.names:
+                    _yolo_model.names[0] = 'person'
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
