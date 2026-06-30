@@ -161,6 +161,8 @@ async def get_camera_feed(camera_id: str):
                     
                     if model:
                         results = model(img, conf=0.25, iou=0.45, verbose=False)
+                        if hasattr(results[0], 'names') and 0 in results[0].names:
+                            results[0].names[0] = 'person'
                         img = results[0].plot()
 
                     ret, buffer = cv2.imencode('.jpg', img)
@@ -198,6 +200,8 @@ async def get_camera_feed(camera_id: str):
                             
                             if model:
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
+                                if hasattr(results[0], 'names') and 0 in results[0].names:
+                                    results[0].names[0] = 'person'
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
