@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from app.api.routers.auth_router import router as auth_router
+from app.api.routers.face_recognition import router as face_router
 
 try:
     from app.api.routers.camera_routes import router as camera_router
@@ -31,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(face_router)
 
 if camera_router:
     app.include_router(camera_router, tags=["camera"])
