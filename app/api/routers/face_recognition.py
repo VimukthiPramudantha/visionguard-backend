@@ -23,7 +23,6 @@ async def compare_faces(
         )
 
     try:
-        # Save uploaded files temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp1:
             tmp1.write(await image1.read())
             img1_path = tmp1.name
@@ -32,11 +31,10 @@ async def compare_faces(
             tmp2.write(await image2.read())
             img2_path = tmp2.name
 
-        # Perform face comparison using DeepFace
         result = DeepFace.verify(
             img1_path=img1_path,
             img2_path=img2_path,
-            model_name="VGG-Face",      # Good balance of accuracy and speed
+            model_name="VGG-Face",      
             detector_backend="opencv",
             enforce_detection=True,
             distance_metric="cosine"
@@ -45,7 +43,6 @@ async def compare_faces(
         similarity = round((1 - result["distance"]) * 100, 2)
         is_match = result["verified"]
 
-        # Clean up temp files
         os.unlink(img1_path)
         os.unlink(img2_path)
 
@@ -59,7 +56,6 @@ async def compare_faces(
         }
 
     except Exception as e:
-        # Clean up in case of error
         for path in [img1_path, img2_path]:
             if os.path.exists(path):
                 os.unlink(path)
