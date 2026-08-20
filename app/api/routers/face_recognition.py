@@ -6,12 +6,22 @@ from app.core.supabase import supabase
 import tempfile
 import os
 import uuid
-import shutil
+import numpy as np
 from typing import Dict, List
 
 router = APIRouter(prefix="/face", tags=["face-recognition"])
 
-STORAGE_DIR = "app/static/registered_faces"
+def calculate_cosine_distance(v1: List[float], v2: List[float]) -> float:
+    """Calculate the cosine distance between two embedding vectors"""
+    a = np.array(v1)
+    b = np.array(v2)
+    dot_product = np.dot(a, b)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 1.0
+    cosine_similarity = dot_product / (norm_a * norm_b)
+    return float(1.0 - cosine_similarity)
 
 @router.post("/compare")
 async def compare_faces(
@@ -77,10 +87,10 @@ async def compare_faces(
 @router.get("/registered")
 async def get_registered_faces():
     """
-    Get the list of registered faces from Supabase
+    Get the list of registered faces from Supabase (excluding the raw embeddings for speed)
     """
     try:
-        response = supabase.table("registered_faces").select("*").execute()
+        response = supabase.table("registered_faces").select("id, name, created_at").execute()
         return response.data or []
     except Exception as e:
         raise HTTPException(
@@ -95,9 +105,9 @@ async def register_face(
     image: UploadFile = File(...)
 ):
     """
-    Register a new face to the Supabase database
+    Register a face by extracting and storing its facial embedding vector,
+    without saving the raw image file.
     """
-    # Validation
     if not image.content_type.startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -110,45 +120,53 @@ async def register_face(
             detail="Name cannot be empty"
         )
 
-    # Make sure storage dir exists
-    os.makedirs(STORAGE_DIR, exist_ok=True)
-
-    # Generate a unique name to prevent directory traversal or collisions
-    file_ext = image.filename.split(".")[-1] if "." in image.filename else "jpg"
-    if file_ext.lower() not in ["jpg", "jpeg", "png"]:
-        file_ext = "jpg"
-        
-    unique_filename = f"{uuid.uuid4()}.{file_ext}"
-    dest_path = os.path.join(STORAGE_DIR, unique_filename)
-
+    temp_path = ""
     try:
-        # Save image locally on backend for DeepFace verify
-        with open(dest_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
+        # Save uploaded image temporarily to run embedding extraction
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            tmp.write(await image.read())
+            temp_path = tmp.name
+
+        # Extract embeddings using VGG-Face
+        representations = DeepFace.represent(
+            img_path=temp_path,
+            model_name="VGG-Face",
+            detector_backend="opencv",
+            enforce_detection=True
+        )
+        
+        if not representations or len(representations) == 0:
+            raise ValueError("No face detected in the image.")
+
+        embedding = representations[0]["embedding"]
+
+        # Clean up temporary file immediately
+        os.unlink(temp_path)
+        temp_path = ""
 
         # Update Supabase DB
         face_id = str(uuid.uuid4())
-        
-        # We store relative URL path for the frontend (which is mounted on /static)
-        # and absolute local path for the backend (DeepFace verify)
         new_face = {
             "id": face_id,
             "name": name.strip(),
-            "image_url": f"/static/registered_faces/{unique_filename}",
-            "file_path": dest_path
+            "embedding": embedding  # Saved as a list of floats (Supabase jsonb column)
         }
         
         response = supabase.table("registered_faces").insert(new_face).execute()
         if not response.data:
             raise Exception("Failed to insert record into Supabase")
 
-        return {"success": True, "message": "Face registered successfully!", "face": new_face}
+        return {
+            "success": True, 
+            "message": "Face embedding registered successfully! No image files were saved.", 
+            "face": {"id": face_id, "name": name.strip()}
+        }
     except Exception as e:
-        if os.path.exists(dest_path):
-            os.unlink(dest_path)
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to register face: {str(e)}"
+            detail=f"Failed to register face vector: {str(e)}"
         )
 
 
@@ -157,7 +175,8 @@ async def identify_face(
     image: UploadFile = File(...)
 ):
     """
-    Identify a face against all registered faces in the Supabase database
+    Identify a face by comparing its embedding vector mathematically
+    against the stored database vectors.
     """
     if not image.content_type.startswith("image/"):
         raise HTTPException(
@@ -166,7 +185,7 @@ async def identify_face(
         )
 
     try:
-        response = supabase.table("registered_faces").select("*").execute()
+        response = supabase.table("registered_faces").select("id, name, embedding").execute()
         db = response.data or []
     except Exception as e:
         raise HTTPException(
@@ -180,55 +199,60 @@ async def identify_face(
             "message": "No registered faces found in the database. Please add some faces first."
         }
 
-    # Save incoming image to temporary file
     temp_target_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             tmp.write(await image.read())
             temp_target_path = tmp.name
 
-        best_match = None
-        highest_similarity = -1.0
+        # Extract target embedding
+        representations = DeepFace.represent(
+            img_path=temp_target_path,
+            model_name="VGG-Face",
+            detector_backend="opencv",
+            enforce_detection=True
+        )
+        
+        if not representations or len(representations) == 0:
+            raise ValueError("No face detected in the image.")
 
-        # Iterate over all registered faces
+        target_embedding = representations[0]["embedding"]
+
+        # Clean up temporary file
+        os.unlink(temp_target_path)
+        temp_target_path = ""
+
+        best_match = None
+        min_distance = 1.0  # Cosine distance ranges from 0 to 2 (0 = identical)
+        # Cosine threshold for VGG-Face is standardly 0.40
+        MATCH_THRESHOLD = 0.40
+
+        # Perform fast mathematical vector comparison
         for person in db:
-            registered_img_path = person.get("file_path")
-            if not registered_img_path or not os.path.exists(registered_img_path):
+            stored_embedding = person.get("embedding")
+            if not stored_embedding:
                 continue
 
             try:
-                result = DeepFace.verify(
-                    img1_path=temp_target_path,
-                    img2_path=registered_img_path,
-                    model_name="VGG-Face",
-                    detector_backend="opencv",
-                    enforce_detection=True,
-                    distance_metric="cosine"
-                )
-                
-                similarity = round((1 - result["distance"]) * 100, 2)
-                
-                # Check match based on verification threshold
-                if result["verified"] and similarity > highest_similarity:
-                    highest_similarity = similarity
+                distance = calculate_cosine_distance(target_embedding, stored_embedding)
+                if distance < min_distance:
+                    min_distance = distance
                     best_match = person
             except Exception:
-                # If face is not detected in one of the images, skip that check
                 continue
 
-        os.unlink(temp_target_path)
-
-        if best_match:
+        if best_match and min_distance <= MATCH_THRESHOLD:
+            similarity = round((1.0 - min_distance) * 100, 2)
             return {
                 "match": True,
                 "name": best_match["name"],
-                "similarity_percentage": highest_similarity,
-                "message": f"Match found: {best_match['name']} with {highest_similarity}% similarity"
+                "similarity_percentage": similarity,
+                "message": f"Match found: {best_match['name']} with {similarity}% confidence"
             }
         else:
             return {
                 "match": False,
-                "message": "No match found in the database. Face does not match any registered user."
+                "message": "No match found. Face does not match any registered profiles."
             }
 
     except Exception as e:
@@ -243,28 +267,16 @@ async def identify_face(
 @router.delete("/registered/{face_id}")
 async def delete_registered_face(face_id: str):
     """
-    Delete a registered face by ID from database and disk
+    Delete a registered face vector profile by ID from the database
     """
     try:
-        # Get face details first to delete the file
-        response = supabase.table("registered_faces").select("*").eq("id", face_id).execute()
+        response = supabase.table("registered_faces").delete().eq("id", face_id).execute()
         if not response.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Registered face not found"
             )
-        
-        person = response.data[0]
-        file_path = person.get("file_path")
-        if file_path and os.path.exists(file_path):
-            try:
-                os.unlink(file_path)
-            except Exception:
-                pass
-                
-        # Delete from Supabase
-        supabase.table("registered_faces").delete().eq("id", face_id).execute()
-        return {"success": True, "message": "Face deleted successfully!"}
+        return {"success": True, "message": "Face profile deleted successfully!"}
     except HTTPException:
         raise
     except Exception as e:
