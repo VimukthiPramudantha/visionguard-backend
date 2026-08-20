@@ -2,8 +2,8 @@
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
-# Add backend directory to sys.path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
@@ -12,8 +12,11 @@ import json
 
 client = TestClient(app)
 
-def test_face_endpoints():
+@patch("app.api.routers.face_recognition.DeepFace.represent")
+def test_face_endpoints(mock_represent):
     print("Starting face recognition API tests...")
+    
+    mock_represent.return_value = [{"embedding": [0.1] * 128}]
 
     response = client.get("/face/registered")
     assert response.status_code == 200
@@ -35,6 +38,8 @@ def test_face_endpoints():
                 data={"name": "Alice Cooper"},
                 files={"image": ("test_temp_face.jpg", img, "image/jpeg")}
             )
+        if response.status_code != 200:
+            print("FAILED REGISTER RESPONSE:", response.status_code, response.text)
         assert response.status_code == 200
         res_data = response.json()
         assert res_data["success"] is True
