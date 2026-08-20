@@ -52,8 +52,8 @@ async def compare_faces(
             img1_path=img1_path,
             img2_path=img2_path,
             model_name="VGG-Face",      
-            detector_backend="opencv",
-            enforce_detection=True,
+            detector_backend="retinaface",
+            enforce_detection=False,
             distance_metric="cosine"
         )
 
@@ -122,17 +122,15 @@ async def register_face(
 
     temp_path = ""
     try:
-        # Save uploaded image temporarily to run embedding extraction
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             tmp.write(await image.read())
             temp_path = tmp.name
 
-        # Extract embeddings using VGG-Face
         representations = DeepFace.represent(
             img_path=temp_path,
             model_name="VGG-Face",
-            detector_backend="opencv",
-            enforce_detection=True
+            detector_backend="retinaface",
+            enforce_detection=False
         )
         
         if not representations or len(representations) == 0:
@@ -140,16 +138,14 @@ async def register_face(
 
         embedding = representations[0]["embedding"]
 
-        # Clean up temporary file immediately
         os.unlink(temp_path)
         temp_path = ""
 
-        # Update Supabase DB
         face_id = str(uuid.uuid4())
         new_face = {
             "id": face_id,
             "name": name.strip(),
-            "embedding": embedding  # Saved as a list of floats (Supabase jsonb column)
+            "embedding": embedding 
         }
         
         response = supabase.table("registered_faces").insert(new_face).execute()
@@ -205,12 +201,11 @@ async def identify_face(
             tmp.write(await image.read())
             temp_target_path = tmp.name
 
-        # Extract target embedding
         representations = DeepFace.represent(
             img_path=temp_target_path,
             model_name="VGG-Face",
-            detector_backend="opencv",
-            enforce_detection=True
+            detector_backend="retinaface",
+            enforce_detection=False
         )
         
         if not representations or len(representations) == 0:
@@ -218,16 +213,13 @@ async def identify_face(
 
         target_embedding = representations[0]["embedding"]
 
-        # Clean up temporary file
         os.unlink(temp_target_path)
         temp_target_path = ""
 
         best_match = None
-        min_distance = 1.0  # Cosine distance ranges from 0 to 2 (0 = identical)
-        # Cosine threshold for VGG-Face is standardly 0.40
+        min_distance = 1.0  
         MATCH_THRESHOLD = 0.40
 
-        # Perform fast mathematical vector comparison
         for person in db:
             stored_embedding = person.get("embedding")
             if not stored_embedding:
