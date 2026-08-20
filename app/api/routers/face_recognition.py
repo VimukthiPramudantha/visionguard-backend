@@ -2,31 +2,16 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Form
 from fastapi.responses import JSONResponse
 from deepface import DeepFace
+from app.core.supabase import supabase
 import tempfile
 import os
 import uuid
 import shutil
-import json
 from typing import Dict, List
 
 router = APIRouter(prefix="/face", tags=["face-recognition"])
 
-DB_FILE = "app/static/registered_faces.json"
 STORAGE_DIR = "app/static/registered_faces"
-
-def load_db() -> List[Dict]:
-    if not os.path.exists(DB_FILE):
-        return []
-    try:
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-def save_db(data: List[Dict]):
-    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f, indent=4)
 
 @router.post("/compare")
 async def compare_faces(
@@ -92,9 +77,16 @@ async def compare_faces(
 @router.get("/registered")
 async def get_registered_faces():
     """
-    Get the list of registered faces
+    Get the list of registered faces from Supabase
     """
-    return load_db()
+    try:
+        response = supabase.table("registered_faces").select("*").execute()
+        return response.data or []
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch registered faces: {str(e)}"
+        )
 
 
 @router.post("/register")
@@ -103,8 +95,9 @@ async def register_face(
     image: UploadFile = File(...)
 ):
     """
-    Register a new face to the database
+    Register a new face to the Supabase database
     """
+    # Validation
     if not image.content_type.startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -117,8 +110,10 @@ async def register_face(
             detail="Name cannot be empty"
         )
 
+    # Make sure storage dir exists
     os.makedirs(STORAGE_DIR, exist_ok=True)
 
+    # Generate a unique name to prevent directory traversal or collisions
     file_ext = image.filename.split(".")[-1] if "." in image.filename else "jpg"
     if file_ext.lower() not in ["jpg", "jpeg", "png"]:
         file_ext = "jpg"
@@ -127,20 +122,25 @@ async def register_face(
     dest_path = os.path.join(STORAGE_DIR, unique_filename)
 
     try:
+        # Save image locally on backend for DeepFace verify
         with open(dest_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
-        db = load_db()
+        # Update Supabase DB
         face_id = str(uuid.uuid4())
         
+        # We store relative URL path for the frontend (which is mounted on /static)
+        # and absolute local path for the backend (DeepFace verify)
         new_face = {
             "id": face_id,
             "name": name.strip(),
             "image_url": f"/static/registered_faces/{unique_filename}",
             "file_path": dest_path
         }
-        db.append(new_face)
-        save_db(db)
+        
+        response = supabase.table("registered_faces").insert(new_face).execute()
+        if not response.data:
+            raise Exception("Failed to insert record into Supabase")
 
         return {"success": True, "message": "Face registered successfully!", "face": new_face}
     except Exception as e:
@@ -157,7 +157,7 @@ async def identify_face(
     image: UploadFile = File(...)
 ):
     """
-    Identify a face against all registered faces in the database
+    Identify a face against all registered faces in the Supabase database
     """
     if not image.content_type.startswith("image/"):
         raise HTTPException(
@@ -165,13 +165,22 @@ async def identify_face(
             detail="File must be an image"
         )
 
-    db = load_db()
+    try:
+        response = supabase.table("registered_faces").select("*").execute()
+        db = response.data or []
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database query failed: {str(e)}"
+        )
+
     if not db:
         return {
             "match": False,
             "message": "No registered faces found in the database. Please add some faces first."
         }
 
+    # Save incoming image to temporary file
     temp_target_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
@@ -181,6 +190,7 @@ async def identify_face(
         best_match = None
         highest_similarity = -1.0
 
+        # Iterate over all registered faces
         for person in db:
             registered_img_path = person.get("file_path")
             if not registered_img_path or not os.path.exists(registered_img_path):
@@ -198,10 +208,12 @@ async def identify_face(
                 
                 similarity = round((1 - result["distance"]) * 100, 2)
                 
+                # Check match based on verification threshold
                 if result["verified"] and similarity > highest_similarity:
                     highest_similarity = similarity
                     best_match = person
             except Exception:
+                # If face is not detected in one of the images, skip that check
                 continue
 
         os.unlink(temp_target_path)
@@ -231,29 +243,32 @@ async def identify_face(
 @router.delete("/registered/{face_id}")
 async def delete_registered_face(face_id: str):
     """
-    Delete a registered face by ID
+    Delete a registered face by ID from database and disk
     """
-    db = load_db()
-    updated_db = []
-    found = False
-
-    for person in db:
-        if person["id"] == face_id:
-            found = True
-            file_path = person.get("file_path")
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.unlink(file_path)
-                except Exception:
-                    pass
-        else:
-            updated_db.append(person)
-
-    if not found:
+    try:
+        # Get face details first to delete the file
+        response = supabase.table("registered_faces").select("*").eq("id", face_id).execute()
+        if not response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Registered face not found"
+            )
+        
+        person = response.data[0]
+        file_path = person.get("file_path")
+        if file_path and os.path.exists(file_path):
+            try:
+                os.unlink(file_path)
+            except Exception:
+                pass
+                
+        # Delete from Supabase
+        supabase.table("registered_faces").delete().eq("id", face_id).execute()
+        return {"success": True, "message": "Face deleted successfully!"}
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Registered face not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete face: {str(e)}"
         )
-
-    save_db(updated_db)
-    return {"success": True, "message": "Face deleted successfully!"}
