@@ -22,6 +22,9 @@ except ImportError:
 
 app = FastAPI(title="VisionGuard")
 
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
