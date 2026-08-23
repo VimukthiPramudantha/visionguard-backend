@@ -3,6 +3,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, status, Form
 from fastapi.responses import JSONResponse
 from deepface import DeepFace
 from app.core.supabase import supabase
+from app.core.security import encrypt_data, decrypt_data, encrypt_embedding, decrypt_embedding
 import tempfile
 import os
 import uuid
@@ -91,7 +92,11 @@ async def get_registered_faces():
     """
     try:
         response = supabase.table("registered_faces").select("id, name, created_at").execute()
-        return response.data or []
+        data = response.data or []
+        for face in data:
+            if "name" in face:
+                face["name"] = decrypt_data(face["name"])
+        return data
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -144,8 +149,8 @@ async def register_face(
         face_id = str(uuid.uuid4())
         new_face = {
             "id": face_id,
-            "name": name.strip(),
-            "embedding": embedding 
+            "name": encrypt_data(name.strip()),
+            "embedding": encrypt_embedding(embedding) 
         }
         
         response = supabase.table("registered_faces").insert(new_face).execute()
@@ -226,7 +231,8 @@ async def identify_face(
                 continue
 
             try:
-                distance = calculate_cosine_distance(target_embedding, stored_embedding)
+                decrypted_embedding = decrypt_embedding(stored_embedding)
+                distance = calculate_cosine_distance(target_embedding, decrypted_embedding)
                 if distance < min_distance:
                     min_distance = distance
                     best_match = person
@@ -234,12 +240,13 @@ async def identify_face(
                 continue
 
         if best_match and min_distance <= MATCH_THRESHOLD:
+            decrypted_name = decrypt_data(best_match["name"])
             similarity = round((1.0 - min_distance) * 100, 2)
             return {
                 "match": True,
-                "name": best_match["name"],
+                "name": decrypted_name,
                 "similarity_percentage": similarity,
-                "message": f"Match found: {best_match['name']} with {similarity}% confidence"
+                "message": f"Match found: {decrypted_name} with {similarity}% confidence"
             }
         else:
             return {
