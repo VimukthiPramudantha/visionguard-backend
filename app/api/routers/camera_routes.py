@@ -176,7 +176,10 @@ async def get_camera_feed(camera_id: str):
                 except ValueError:
                     val = camera.url
                 
-                cap = cv2.VideoCapture(val, cv2.CAP_MSMF)
+                if isinstance(val, int):
+                    cap = cv2.VideoCapture(val, cv2.CAP_MSMF)
+                else:
+                    cap = cv2.VideoCapture(val)
                     
                 if not cap.isOpened():
                     width, height = 640, 480
