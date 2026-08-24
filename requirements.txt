@@ -58,3 +58,4 @@ deepface
 supabase
 bcrypt
 pydantic[email]
+redis

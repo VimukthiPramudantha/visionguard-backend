@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from deepface import DeepFace
 from app.core.supabase import supabase
 from app.core.security import encrypt_data, decrypt_data, encrypt_embedding, decrypt_embedding
+from app.core.redis import get_cache, set_cache, delete_cache
 import tempfile
 import os
 import uuid
@@ -91,11 +92,18 @@ async def get_registered_faces():
     Get the list of registered faces from Supabase (excluding the raw embeddings for speed)
     """
     try:
+        cache_key = "registered_faces:without_embeddings"
+        cached_data = await get_cache(cache_key)
+        if cached_data is not None:
+            return cached_data
+
         response = supabase.table("registered_faces").select("id, name, created_at").execute()
         data = response.data or []
         for face in data:
             if "name" in face:
                 face["name"] = decrypt_data(face["name"])
+        
+        await set_cache(cache_key, data, expire_seconds=3600)
         return data
     except Exception as e:
         raise HTTPException(
@@ -157,6 +165,10 @@ async def register_face(
         if not response.data:
             raise Exception("Failed to insert record into Supabase")
 
+        # Invalidate cache
+        await delete_cache("registered_faces:without_embeddings")
+        await delete_cache("registered_faces:with_embeddings")
+
         return {
             "success": True, 
             "message": "Face embedding registered successfully! No image files were saved.", 
@@ -186,8 +198,12 @@ async def identify_face(
         )
 
     try:
-        response = supabase.table("registered_faces").select("id, name, embedding").execute()
-        db = response.data or []
+        cache_key = "registered_faces:with_embeddings"
+        db = await get_cache(cache_key)
+        if db is None:
+            response = supabase.table("registered_faces").select("id, name, embedding").execute()
+            db = response.data or []
+            await set_cache(cache_key, db, expire_seconds=3600)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -275,6 +291,11 @@ async def delete_registered_face(face_id: str):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Registered face not found"
             )
+        
+        # Invalidate cache
+        await delete_cache("registered_faces:without_embeddings")
+        await delete_cache("registered_faces:with_embeddings")
+
         return {"success": True, "message": "Face profile deleted successfully!"}
     except HTTPException:
         raise
