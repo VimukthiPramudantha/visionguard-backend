@@ -56,43 +56,7 @@ def get_detected_cameras() -> List[Camera]:
         location="Backyard"
     ))
     
-    try:
-        import cv2
-        for index in range(3):  
-            cam_id = f"usb_{index}"
-            if cam_id in active_feeds:
-                detected.append(Camera(
-                    id=cam_id,
-                    name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
-                    type="usb",
-                    url=str(index),
-                    status="online",
-                    last_active=datetime.utcnow().isoformat(),
-                    location="Local Host"
-                ))
-                continue
 
-            cap = cv2.VideoCapture(index, cv2.CAP_MSMF) 
-            if cap.isOpened():
-                
-                success, frame = cap.read()
-                
-                if success and frame is not None and frame.size > 0:
-                    import numpy as np
-                    std_dev = np.std(frame)
-                    if std_dev > 2.0:
-                        detected.append(Camera(
-                            id=cam_id,
-                            name=f"Integrated Camera {index}" if index == 0 else f"USB Camera {index}",
-                            type="usb",
-                            url=str(index),
-                            status="online",
-                            last_active=datetime.utcnow().isoformat(),
-                            location="Local Host"
-                        ))
-                cap.release()
-    except Exception as e:
-        print(f"Error scanning local webcams: {e}")
         
     for cam_id, cam in _in_memory_cameras.items():
         if not any(d.id == cam_id for d in detected):
@@ -139,6 +103,8 @@ def get_yolo_model():
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
+                if hasattr(_yolo_model, 'names') and 0 in _yolo_model.names:
+                    _yolo_model.names[0] = 'person'
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
@@ -154,7 +120,7 @@ def get_yolo_model():
     return _yolo_model if _yolo_model is not False else None
 
 @router.get("/cameras/{camera_id}/feed")
-async def get_camera_feed(camera_id: str):
+def get_camera_feed(camera_id: str):
     from fastapi.responses import StreamingResponse
     import cv2
     import numpy as np
@@ -224,6 +190,8 @@ async def get_camera_feed(camera_id: str):
                             
                             if model:
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
+                                if hasattr(results[0], 'names') and 0 in results[0].names:
+                                    results[0].names[0] = 'person'
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
@@ -254,6 +222,8 @@ async def get_camera_feed(camera_id: str):
                     
                     if model:
                         results = model(img, conf=0.25, iou=0.45, verbose=False)
+                        if hasattr(results[0], 'names') and 0 in results[0].names:
+                            results[0].names[0] = 'person'
                         img = results[0].plot()
 
                     ret, buffer = cv2.imencode('.jpg', img)
@@ -294,6 +264,8 @@ async def get_camera_feed(camera_id: str):
                             
                             if model:
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
+                                if hasattr(results[0], 'names') and 0 in results[0].names:
+                                    results[0].names[0] = 'person'
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
