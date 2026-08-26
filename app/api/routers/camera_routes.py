@@ -103,8 +103,6 @@ def get_yolo_model():
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
-                if hasattr(_yolo_model, 'names') and 0 in _yolo_model.names:
-                    _yolo_model.names[0] = 'person'
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
@@ -189,10 +187,11 @@ def get_camera_feed(camera_id: str):
                                 break
                             
                             if model:
-                                results = model(frame, conf=0.25, iou=0.45, verbose=False)
-                                if hasattr(results[0], 'names') and 0 in results[0].names:
-                                    results[0].names[0] = 'person'
-                                frame = results[0].plot()
+                                try:
+                                    results = model(frame, conf=0.25, iou=0.45, device=0, verbose=False)
+                                    frame = results[0].plot()
+                                except Exception as e:
+                                    print(f"Error during YOLO GPU inference (CCTV): {e}")
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
@@ -221,10 +220,11 @@ def get_camera_feed(camera_id: str):
                     cv2.line(img, (50, y), (590, y), (0, 0, 255), 2)
                     
                     if model:
-                        results = model(img, conf=0.25, iou=0.45, verbose=False)
-                        if hasattr(results[0], 'names') and 0 in results[0].names:
-                            results[0].names[0] = 'person'
-                        img = results[0].plot()
+                        try:
+                            results = model(img, conf=0.25, iou=0.45, device=0, verbose=False)
+                            img = results[0].plot()
+                        except Exception as e:
+                            print(f"Error during YOLO GPU inference (Simulated): {e}")
 
                     ret, buffer = cv2.imencode('.jpg', img)
                     frame_bytes = buffer.tobytes()
@@ -263,10 +263,11 @@ def get_camera_feed(camera_id: str):
                                 break
                             
                             if model:
-                                results = model(frame, conf=0.25, iou=0.45, verbose=False)
-                                if hasattr(results[0], 'names') and 0 in results[0].names:
-                                    results[0].names[0] = 'person'
-                                frame = results[0].plot()
+                                try:
+                                    results = model(frame, conf=0.25, iou=0.45, device=0, verbose=False)
+                                    frame = results[0].plot()
+                                except Exception as e:
+                                    print(f"Error during YOLO GPU inference (USB): {e}")
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
