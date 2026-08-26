@@ -99,7 +99,7 @@ def get_yolo_model():
     if _yolo_model is None:
         try:
             from ultralytics import YOLO
-            model_path = r"d:\Projects\VisionGuard\visionguard-backend\runs\detect\train\weights\best.pt"
+            model_path = r"d:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train\weights\best.pt"
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
