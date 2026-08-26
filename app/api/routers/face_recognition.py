@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from deepface import DeepFace
 from app.core.supabase import supabase
 from app.core.security import encrypt_data, decrypt_data, encrypt_embedding, decrypt_embedding
-from app.core.redis import get_cache, set_cache, delete_cache
+from app.core.redis import get_cache, set_cache, delete_cache, get_cache_status
 import tempfile
 import os
 import uuid
@@ -292,7 +292,6 @@ async def delete_registered_face(face_id: str):
                 detail="Registered face not found"
             )
         
-        # Invalidate cache
         await delete_cache("registered_faces:without_embeddings")
         await delete_cache("registered_faces:with_embeddings")
 
@@ -304,3 +303,12 @@ async def delete_registered_face(face_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete face: {str(e)}"
         )
+
+
+@router.get("/cache-status")
+async def cache_status():
+    """
+    Returns diagnostic information about the current caching state.
+    Shows whether Redis or the in-memory fallback is active, and which keys are currently cached.
+    """
+    return get_cache_status()

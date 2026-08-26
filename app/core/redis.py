@@ -18,7 +18,6 @@ logger = logging.getLogger("visionguard.redis")
 _redis_client: Optional[redis.Redis] = None
 _redis_available = True
 
-# Local in-memory cache fallback
 _memory_cache = {}
 
 try:
@@ -124,3 +123,17 @@ async def clear_cache_pattern(pattern: str) -> bool:
     except Exception as e:
         logger.warning(f"Redis clear pattern failed for pattern {pattern}: {e}")
     return False
+
+def get_cache_status() -> dict:
+    """Return diagnostic information about the current cache state."""
+    import time
+    now = time.time()
+    valid_keys = [k for k, v in _memory_cache.items() if v["expires_at"] > now]
+    return {
+        "redis_url": REDIS_URL,
+        "redis_client_initialized": _redis_client is not None,
+        "redis_available": _redis_available,
+        "cache_backend": "redis" if (_redis_client is not None and _redis_available) else "in-memory",
+        "in_memory_cache_key_count": len(valid_keys),
+        "in_memory_cache_keys": valid_keys,
+    }
