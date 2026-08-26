@@ -27,7 +27,6 @@ active_feeds = set()
 def get_detected_cameras() -> List[Camera]:
     detected = []
     
-    # Add CCTV cameras
     detected.append(Camera(
         id="cctv_1",
         name="Camera 01",
@@ -54,6 +53,33 @@ def get_detected_cameras() -> List[Camera]:
         status="online",
         last_active=datetime.utcnow().isoformat(),
         location="Backyard"
+    ))
+    detected.append(Camera(
+            id="cctv_4",
+            name="Camera 04",
+            type="cctv",
+            url="CCTV/Cam04",
+            status="online",
+            last_active=datetime.utcnow().isoformat(),
+            location="Road"
+        ))
+    detected.append(Camera(
+                id="cctv_5",
+                name="Camera 05",
+                type="cctv",
+                url="CCTV/Cam05",
+                status="online",
+                last_active=datetime.utcnow().isoformat(),
+                location="Parking"
+    ))
+    detected.append(Camera(
+                    id="cctv_6",
+                    name="Camera 06",
+                    type="cctv",
+                    url="CCTV/Cam06",
+                    status="online",
+                    last_active=datetime.utcnow().isoformat(),
+                    location="Traffic"
     ))
     
 
@@ -94,6 +120,15 @@ async def get_camera(camera_id: str):
     raise HTTPException(status_code=404, detail="Camera not found")
 
 _yolo_model = None
+
+_VEHICLE_CLASSES = {"bicycle", "bus", "car", "motorbike", "truck"}
+
+_BOX_COLORS = {
+    "vehicle": (0, 140, 255),   
+    "person":  (0, 220, 100),   
+}
+
+
 def get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
@@ -103,6 +138,7 @@ def get_yolo_model():
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
+                print(f"[VisionGuard] Model loaded. Classes: {_yolo_model.names}")
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
@@ -116,6 +152,58 @@ def get_yolo_model():
             print(f"Failed to load YOLO: {e}")
             _yolo_model = False
     return _yolo_model if _yolo_model is not False else None
+
+
+def run_detection(model, frame):
+    """Run YOLO inference and draw custom labels.
+
+    Label mapping:
+      bicycle / bus / car / motorbike / truck  →  'vehicle'  (orange box)
+      person                                   →  'person'   (green box)
+
+    Accuracy improvements vs. previous defaults:
+      conf=0.45   – higher confidence threshold reduces false positives
+      iou=0.35    – tighter NMS overlap suppresses duplicate boxes
+      augment=True – test-time augmentation improves recall on small/occluded objects
+      imgsz=640   – matches the training resolution
+    """
+    import cv2
+
+    results = model(
+        frame,
+        conf=0.45,
+        iou=0.35,
+        augment=True,       
+        imgsz=640,
+        device=0,
+        verbose=False,
+    )
+
+    annotated = frame.copy()
+    for box in results[0].boxes:
+        cls_id   = int(box.cls[0])
+        conf_val = float(box.conf[0])
+        raw_name = model.names[cls_id]
+
+        label = "vehicle" if raw_name in _VEHICLE_CLASSES else "person"
+        color = _BOX_COLORS.get(label, (200, 200, 200))
+
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+
+        text = f"{label} {conf_val:.2f}"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        cv2.rectangle(annotated, (x1, y1 - th - 8), (x1 + tw + 6, y1), color, -1)
+        cv2.putText(
+            annotated, text,
+            (x1 + 3, y1 - 5),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+            (0, 0, 0), 1, cv2.LINE_AA,
+        )
+
+    return annotated
+
 
 @router.get("/cameras/{camera_id}/feed")
 def get_camera_feed(camera_id: str):
@@ -138,7 +226,6 @@ def get_camera_feed(camera_id: str):
         try:
             model = get_yolo_model()
             if is_cctv:
-                # Find all video files in the camera folder
                 backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
                 cam_path = os.path.join(backend_root, camera.url)
                 
@@ -188,10 +275,9 @@ def get_camera_feed(camera_id: str):
                             
                             if model:
                                 try:
-                                    results = model(frame, conf=0.25, iou=0.45, device=0, verbose=False)
-                                    frame = results[0].plot()
+                                    frame = run_detection(model, frame)
                                 except Exception as e:
-                                    print(f"Error during YOLO GPU inference (CCTV): {e}")
+                                    print(f"Error during YOLO inference (CCTV): {e}")
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
@@ -221,10 +307,9 @@ def get_camera_feed(camera_id: str):
                     
                     if model:
                         try:
-                            results = model(img, conf=0.25, iou=0.45, device=0, verbose=False)
-                            img = results[0].plot()
+                            img = run_detection(model, img)
                         except Exception as e:
-                            print(f"Error during YOLO GPU inference (Simulated): {e}")
+                            print(f"Error during YOLO inference (Simulated): {e}")
 
                     ret, buffer = cv2.imencode('.jpg', img)
                     frame_bytes = buffer.tobytes()
@@ -264,10 +349,9 @@ def get_camera_feed(camera_id: str):
                             
                             if model:
                                 try:
-                                    results = model(frame, conf=0.25, iou=0.45, device=0, verbose=False)
-                                    frame = results[0].plot()
+                                    frame = run_detection(model, frame)
                                 except Exception as e:
-                                    print(f"Error during YOLO GPU inference (USB): {e}")
+                                    print(f"Error during YOLO inference (USB): {e}")
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
