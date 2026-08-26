@@ -139,11 +139,6 @@ def get_yolo_model():
             import os
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
-                
-                # Override the class names: the user requested that class 0 ('bicycle') 
-                # be displayed as 'person' when detected.
-                if hasattr(_yolo_model, 'names') and 0 in _yolo_model.names:
-                    _yolo_model.names[0] = 'person'
             else:
                 print(f"YOLO model not found at {model_path}")
                 _yolo_model = False
@@ -229,8 +224,6 @@ async def get_camera_feed(camera_id: str):
                             
                             if model:
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
-                                if hasattr(results[0], 'names') and 0 in results[0].names:
-                                    results[0].names[0] = 'person'
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
@@ -261,8 +254,6 @@ async def get_camera_feed(camera_id: str):
                     
                     if model:
                         results = model(img, conf=0.25, iou=0.45, verbose=False)
-                        if hasattr(results[0], 'names') and 0 in results[0].names:
-                            results[0].names[0] = 'person'
                         img = results[0].plot()
 
                     ret, buffer = cv2.imencode('.jpg', img)
@@ -303,8 +294,6 @@ async def get_camera_feed(camera_id: str):
                             
                             if model:
                                 results = model(frame, conf=0.25, iou=0.45, verbose=False)
-                                if hasattr(results[0], 'names') and 0 in results[0].names:
-                                    results[0].names[0] = 'person'
                                 frame = results[0].plot()
 
                             ret, buffer = cv2.imencode('.jpg', frame)
