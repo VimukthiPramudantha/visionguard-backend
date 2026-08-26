@@ -1,8 +1,11 @@
-# app/api/routers/camera_routes.py
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+import asyncio
+import cv2
+import numpy as np
+import base64
 
 router = APIRouter()
 
@@ -164,18 +167,7 @@ def get_yolo_model():
 
 
 def run_detection(model, frame):
-    """Run YOLO inference and draw custom labels.
 
-    Label mapping:
-      bicycle / bus / car / motorbike / truck  →  'vehicle'  (orange box)
-      person                                   →  'person'   (green box)
-
-    Accuracy improvements vs. previous defaults:
-      conf=0.45   – higher confidence threshold reduces false positives
-      iou=0.35    – tighter NMS overlap suppresses duplicate boxes
-      augment=True – test-time augmentation improves recall on small/occluded objects
-      imgsz=640   – matches the training resolution
-    """
     import cv2
 
     results = model(
@@ -373,3 +365,157 @@ def get_camera_feed(camera_id: str):
             active_feeds.discard(camera_id)
 
     return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@router.websocket("/cameras/{camera_id}/ws")
+async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
+
+    await websocket.accept()
+    
+    cameras = get_detected_cameras()
+    camera = next((c for c in cameras if c.id == camera_id), None)
+    if not camera:
+        await websocket.close(code=1008, reason="Camera not found")
+        return
+
+    is_simulated = (camera.id == "simulated_0")
+    is_cctv = camera.id.startswith("cctv_")
+    
+    active_feeds.add(camera_id)
+    cap = None
+    
+    async def receive_messages():
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+
+    receiver_task = asyncio.create_task(receive_messages())
+
+    try:
+        model = get_yolo_model()
+        
+        if is_cctv:
+            import os
+            backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            cam_path = os.path.join(backend_root, camera.url)
+            if os.path.exists(cam_path) and os.path.isdir(cam_path):
+                video_files = sorted([
+                    os.path.join(cam_path, f)
+                    for f in os.listdir(cam_path)
+                    if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))
+                ], key=lambda x: x.lower())
+            else:
+                video_files = []
+            
+            if not video_files:
+                while not receiver_task.done():
+                    img = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(img, "NO VIDEO FILES FOUND", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                    _, buffer = cv2.imencode('.jpg', img)
+                    jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+                    await websocket.send_text(jpg_as_text)
+                    await asyncio.sleep(0.04)
+            
+            video_index = 0
+            while not receiver_task.done():
+                video_path = video_files[video_index]
+                cap = cv2.VideoCapture(video_path)
+                if not cap.isOpened():
+                    video_index = (video_index + 1) % len(video_files)
+                    await asyncio.sleep(1)
+                    continue
+                
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                delay = 1.0 / (fps if fps > 0 else 25.0)
+                
+                try:
+                    while not receiver_task.done():
+                        t0 = asyncio.get_event_loop().time()
+                        success, frame = cap.read()
+                        if not success:
+                            break
+                        
+                        if model:
+                            try:
+                                frame = run_detection(model, frame)
+                            except Exception:
+                                pass
+                        
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        if ret:
+                            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+                            await websocket.send_text(jpg_as_text)
+                        
+                        elapsed = asyncio.get_event_loop().time() - t0
+                        sleep_time = max(0.001, delay - elapsed)
+                        await asyncio.sleep(sleep_time)
+                finally:
+                    cap.release()
+                
+                video_index = (video_index + 1) % len(video_files)
+                
+        elif is_simulated:
+            while not receiver_task.done():
+                img = np.zeros((480, 640, 3), dtype=np.uint8)
+                t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(img, "VisionGuard WS Feed", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                cv2.putText(img, "SIMULATED LIVE WS", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
+                cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (34, 197, 94), 2)
+                
+                if model:
+                    try:
+                        img = run_detection(model, img)
+                    except Exception:
+                        pass
+                
+                ret, buffer = cv2.imencode('.jpg', img)
+                if ret:
+                    jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+                    await websocket.send_text(jpg_as_text)
+                await asyncio.sleep(0.04)
+                
+        else:
+            try:
+                val = int(camera.url)
+            except ValueError:
+                val = camera.url
+            
+            cap = cv2.VideoCapture(val, cv2.CAP_MSMF) if isinstance(val, int) else cv2.VideoCapture(val)
+            if not cap.isOpened():
+                while not receiver_task.done():
+                    img = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(img, "CAMERA UNREACHABLE", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                    _, buffer = cv2.imencode('.jpg', img)
+                    jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+                    await websocket.send_text(jpg_as_text)
+                    await asyncio.sleep(0.04)
+            
+            while not receiver_task.done():
+                success, frame = cap.read()
+                if not success:
+                    await asyncio.sleep(0.01)
+                    continue
+                
+                if model:
+                    try:
+                        frame = run_detection(model, frame)
+                    except Exception:
+                        pass
+                
+                ret, buffer = cv2.imencode('.jpg', frame)
+                if ret:
+                    jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+                    await websocket.send_text(jpg_as_text)
+                await asyncio.sleep(0.01)
+
+    except WebSocketDisconnect:
+        print(f"[WS] Client disconnected from camera {camera_id}")
+    except Exception as e:
+        print(f"[WS] Error streaming camera {camera_id}: {e}")
+    finally:
+        receiver_task.cancel()
+        if cap and cap.isOpened():
+            cap.release()
+        active_feeds.discard(camera_id)
