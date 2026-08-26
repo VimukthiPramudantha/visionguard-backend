@@ -12,9 +12,14 @@ import json
 
 client = TestClient(app)
 
+@patch("app.api.routers.face_recognition.delete_cache")
+@patch("app.api.routers.face_recognition.set_cache")
+@patch("app.api.routers.face_recognition.get_cache")
 @patch("app.api.routers.face_recognition.DeepFace.represent")
-def test_face_endpoints(mock_represent):
+def test_face_endpoints(mock_represent, mock_get_cache, mock_set_cache, mock_delete_cache):
     print("Starting face recognition API tests...")
+    mock_get_cache.return_value = None
+
     
     mock_represent.return_value = [{"embedding": [0.1] * 128}]
 
