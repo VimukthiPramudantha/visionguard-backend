@@ -27,6 +27,35 @@ active_feeds = set()
 def get_detected_cameras() -> List[Camera]:
     detected = []
     
+    # Add CCTV cameras
+    detected.append(Camera(
+        id="cctv_1",
+        name="Camera 01",
+        type="cctv",
+        url="CCTV/Cam01",
+        status="online",
+        last_active=datetime.utcnow().isoformat(),
+        location="Front Gate"
+    ))
+    detected.append(Camera(
+        id="cctv_2",
+        name="Camera 02",
+        type="cctv",
+        url="CCTV/Cam02",
+        status="online",
+        last_active=datetime.utcnow().isoformat(),
+        location="Main Hall"
+    ))
+    detected.append(Camera(
+        id="cctv_3",
+        name="Camera 03",
+        type="cctv",
+        url="CCTV/Cam03",
+        status="online",
+        last_active=datetime.utcnow().isoformat(),
+        location="Backyard"
+    ))
+    
     try:
         import cv2
         for index in range(3):  
@@ -135,6 +164,7 @@ async def get_camera_feed(camera_id: str):
     import cv2
     import numpy as np
     import time
+    import os
 
     cameras = get_detected_cameras()
     camera = next((c for c in cameras if c.id == camera_id), None)
@@ -142,12 +172,82 @@ async def get_camera_feed(camera_id: str):
         raise HTTPException(status_code=404, detail="Camera not found")
 
     is_simulated = (camera.id == "simulated_0")
+    is_cctv = camera.id.startswith("cctv_")
 
     def gen_frames():
         active_feeds.add(camera_id)
         try:
             model = get_yolo_model()
-            if is_simulated:
+            if is_cctv:
+                # Find all video files in the camera folder
+                backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                cam_path = os.path.join(backend_root, camera.url)
+                
+                if os.path.exists(cam_path) and os.path.isdir(cam_path):
+                    video_files = sorted([
+                        os.path.join(cam_path, f)
+                        for f in os.listdir(cam_path)
+                        if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))
+                    ], key=lambda x: x.lower())
+                else:
+                    video_files = []
+                
+                if not video_files:
+                    width, height = 640, 480
+                    while True:
+                        img = np.zeros((height, width, 3), dtype=np.uint8)
+                        t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        cv2.putText(img, camera.name, (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                        cv2.putText(img, "NO VIDEO FILES FOUND", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (239, 68, 68), 2)
+                        cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 116, 139), 2)
+                        
+                        ret, buffer = cv2.imencode('.jpg', img)
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                        time.sleep(0.04)
+                
+                video_index = 0
+                while True:
+                    video_path = video_files[video_index]
+                    cap = cv2.VideoCapture(video_path)
+                    if not cap.isOpened():
+                        video_index = (video_index + 1) % len(video_files)
+                        time.sleep(1)
+                        continue
+                    
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    if fps <= 0 or np.isnan(fps):
+                        fps = 25.0
+                    delay = 1.0 / fps
+                    
+                    try:
+                        while True:
+                            start_time = time.time()
+                            success, frame = cap.read()
+                            if not success:
+                                break
+                            
+                            if model:
+                                results = model(frame, conf=0.25, iou=0.45, verbose=False)
+                                if hasattr(results[0], 'names') and 0 in results[0].names:
+                                    results[0].names[0] = 'person'
+                                frame = results[0].plot()
+
+                            ret, buffer = cv2.imencode('.jpg', frame)
+                            if not ret:
+                                continue
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                            
+                            elapsed = time.time() - start_time
+                            sleep_time = max(0.001, delay - elapsed)
+                            time.sleep(sleep_time)
+                    finally:
+                        cap.release()
+                    
+                    video_index = (video_index + 1) % len(video_files)
+
+            elif is_simulated:
                 width, height = 640, 480
                 while True:
                     img = np.zeros((height, width, 3), dtype=np.uint8)
