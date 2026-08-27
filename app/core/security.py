@@ -28,8 +28,20 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 JWT_SECRET = os.getenv("JWT_SECRET")
+
 if not JWT_SECRET:
-    JWT_SECRET = "visionguard-secret-super-key-change-in-prod"
+    import secrets
+    key = secrets.token_hex(32)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(base_dir, ".env")
+    try:
+        with open(env_path, "a") as f:
+            f.write(f"\nJWT_SECRET={key}\n")
+        JWT_SECRET = key
+        print("[VisionGuard] Generated new secure JWT_SECRET and saved to .env")
+    except Exception as e:
+        print("Warning: Could not save JWT_SECRET to .env file:", e)
+        JWT_SECRET = "fallback-visionguard-secret-super-key-change-in-prod"
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  
