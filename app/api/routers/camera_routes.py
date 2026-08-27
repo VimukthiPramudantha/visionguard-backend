@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 import asyncio
 import cv2
 import numpy as np
 import base64
+import os
+import time as _time
+import json
 
 router = APIRouter()
 
@@ -26,6 +29,20 @@ class CameraCreate(BaseModel):
 
 _in_memory_cameras = {}
 active_feeds = set()
+
+_camera_zones: Dict[str, list] = {}
+
+_zone_snapshot_cooldowns: Dict[str, float] = {}
+ZONE_SNAPSHOT_COOLDOWN_SECS = 10
+
+
+class ZonePoint(BaseModel):
+    x: float
+    y: float
+
+
+class ZonePayload(BaseModel):
+    points: List[ZonePoint]
 
 def get_detected_cameras() -> List[Camera]:
     detected = []
@@ -95,6 +112,83 @@ _BOX_COLORS = {
 }
 
 
+@router.post("/cameras/{camera_id}/zone")
+async def set_camera_zone(camera_id: str, payload: ZonePayload):
+    cameras = get_detected_cameras()
+    if not any(c.id == camera_id for c in cameras):
+        raise HTTPException(status_code=404, detail="Camera not found")
+    _camera_zones[camera_id] = [p.model_dump() for p in payload.points]
+    return {"status": "ok", "camera_id": camera_id, "points": _camera_zones[camera_id]}
+
+
+@router.get("/cameras/{camera_id}/zone")
+async def get_camera_zone(camera_id: str):
+    zone = _camera_zones.get(camera_id)
+    return {"camera_id": camera_id, "points": zone}
+
+
+@router.delete("/cameras/{camera_id}/zone")
+async def delete_camera_zone(camera_id: str):
+    _camera_zones.pop(camera_id, None)
+    return {"status": "ok", "camera_id": camera_id}
+
+
+def _denormalize_zone(zone_points, frame_w, frame_h):
+    return np.array(
+        [[int(p["x"] * frame_w), int(p["y"] * frame_h)] for p in zone_points],
+        dtype=np.int32,
+    )
+
+
+def check_zone_intrusion(detections, zone_points, frame_w, frame_h):
+    if not zone_points or len(zone_points) < 3:
+        return []
+
+    poly = _denormalize_zone(zone_points, frame_w, frame_h).reshape((-1, 1, 2))
+    intruders = []
+    for det in detections:
+        cx = (det["x1"] + det["x2"]) // 2
+        cy = (det["y1"] + det["y2"]) // 2
+        dist = cv2.pointPolygonTest(poly, (float(cx), float(cy)), False)
+        if dist >= 0:  
+            intruders.append(det)
+    return intruders
+
+
+def save_intrusion_snapshot(frame, camera_id):
+    now = _time.time()
+    last = _zone_snapshot_cooldowns.get(camera_id, 0)
+    if now - last < ZONE_SNAPSHOT_COOLDOWN_SECS:
+        return None  
+
+    _zone_snapshot_cooldowns[camera_id] = now
+
+    dt = datetime.now()
+    time_folder = dt.strftime("%H-%M-%S")
+    date_file = dt.strftime("%Y-%m-%d")
+
+    backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    save_dir = os.path.join(backend_root, "snapshots", "Detect", camera_id, time_folder)
+    os.makedirs(save_dir, exist_ok=True)
+
+    save_path = os.path.join(save_dir, f"{date_file}.jpg")
+    cv2.imwrite(save_path, frame)
+    print(f"[VisionGuard] Intrusion snapshot saved → {save_path}")
+    return save_path
+
+
+def draw_zone_overlay(frame, zone_points):
+    if not zone_points or len(zone_points) < 3:
+        return frame
+    h, w = frame.shape[:2]
+    poly = _denormalize_zone(zone_points, w, h)
+    overlay = frame.copy()
+    cv2.fillPoly(overlay, [poly], (0, 200, 255, 80))
+    cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+    cv2.polylines(frame, [poly], True, (0, 200, 255), 2, cv2.LINE_AA)
+    return frame
+
+
 def get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
@@ -121,7 +215,6 @@ def get_yolo_model():
 
 
 def run_detection(model, frame):
-
     import cv2
 
     results = model(
@@ -135,6 +228,7 @@ def run_detection(model, frame):
     )
 
     annotated = frame.copy()
+    detections = []
     for box in results[0].boxes:
         cls_id   = int(box.cls[0])
         conf_val = float(box.conf[0])
@@ -144,6 +238,12 @@ def run_detection(model, frame):
         color = _BOX_COLORS.get(label, (200, 200, 200))
 
         x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        detections.append({
+            "label": label,
+            "confidence": conf_val,
+            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        })
 
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
@@ -157,7 +257,7 @@ def run_detection(model, frame):
             (0, 0, 0), 1, cv2.LINE_AA,
         )
 
-    return annotated
+    return annotated, detections
 
 
 @router.get("/cameras/{camera_id}/feed")
@@ -228,11 +328,21 @@ def get_camera_feed(camera_id: str):
                             if not success:
                                 break
                             
+                            detections = []
                             if model:
                                 try:
-                                    frame = run_detection(model, frame)
+                                    frame, detections = run_detection(model, frame)
                                 except Exception as e:
                                     print(f"Error during YOLO inference (CCTV): {e}")
+
+                            zone = _camera_zones.get(camera_id)
+                            if zone and detections:
+                                h, w = frame.shape[:2]
+                                intruders = check_zone_intrusion(detections, zone, w, h)
+                                if intruders:
+                                    save_intrusion_snapshot(frame, camera_id)
+                            if zone:
+                                frame = draw_zone_overlay(frame, zone)
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
@@ -262,7 +372,7 @@ def get_camera_feed(camera_id: str):
                     
                     if model:
                         try:
-                            img = run_detection(model, img)
+                            img, _ = run_detection(model, img)
                         except Exception as e:
                             print(f"Error during YOLO inference (Simulated): {e}")
 
@@ -302,11 +412,21 @@ def get_camera_feed(camera_id: str):
                             if not success:
                                 break
                             
+                            detections = []
                             if model:
                                 try:
-                                    frame = run_detection(model, frame)
+                                    frame, detections = run_detection(model, frame)
                                 except Exception as e:
                                     print(f"Error during YOLO inference (USB): {e}")
+
+                            zone = _camera_zones.get(camera_id)
+                            if zone and detections:
+                                h, w = frame.shape[:2]
+                                intruders = check_zone_intrusion(detections, zone, w, h)
+                                if intruders:
+                                    save_intrusion_snapshot(frame, camera_id)
+                            if zone:
+                                frame = draw_zone_overlay(frame, zone)
 
                             ret, buffer = cv2.imencode('.jpg', frame)
                             if not ret:
@@ -341,7 +461,37 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
     async def receive_messages():
         try:
             while True:
-                await websocket.receive_text()
+                raw = await websocket.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                msg_type = msg.get("type")
+                if msg_type == "set_zone":
+                    points = msg.get("points", [])
+                    if points and len(points) >= 3:
+                        _camera_zones[camera_id] = points
+                        print(f"[VisionGuard] Zone set for camera {camera_id}: {len(points)} points")
+                        try:
+                            await websocket.send_text(json.dumps({
+                                "type": "zone_set_ack",
+                                "camera_id": camera_id,
+                                "points": points,
+                            }))
+                        except Exception:
+                            pass
+                elif msg_type == "clear_zone":
+                    _camera_zones.pop(camera_id, None)
+                    _zone_snapshot_cooldowns.pop(camera_id, None)
+                    print(f"[VisionGuard] Zone cleared for camera {camera_id}")
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "zone_clear_ack",
+                            "camera_id": camera_id,
+                        }))
+                    except Exception:
+                        pass
         except WebSocketDisconnect:
             pass
 
@@ -391,11 +541,35 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
                         if not success:
                             break
                         
+                        detections = []
                         if model:
                             try:
-                                frame = run_detection(model, frame)
+                                frame, detections = run_detection(model, frame)
                             except Exception:
                                 pass
+
+                        zone = _camera_zones.get(camera_id)
+                        if zone and detections:
+                            h, w = frame.shape[:2]
+                            intruders = check_zone_intrusion(detections, zone, w, h)
+                            if intruders:
+                                saved = save_intrusion_snapshot(frame, camera_id)
+                                if saved:
+                                    try:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "zone_alert",
+                                            "camera_id": camera_id,
+                                            "intruders": [
+                                                {"label": i["label"], "confidence": round(i["confidence"], 2)}
+                                                for i in intruders
+                                            ],
+                                            "snapshot_path": saved,
+                                            "timestamp": datetime.now().isoformat(),
+                                        }))
+                                    except Exception:
+                                        pass
+                        if zone:
+                            frame = draw_zone_overlay(frame, zone)
                         
                         ret, buffer = cv2.imencode('.jpg', frame)
                         if ret:
@@ -414,13 +588,15 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
             while not receiver_task.done():
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
                 t_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(img, "VisionGuard WS Feed", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
-                cv2.putText(img, "SIMULATED LIVE WS", (50, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
+                cv2.putText(img, "VisionGuard WS Feed", (50, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+                cv2.putText(img, "SIMULATED LIVE WS", (50, 210),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (14, 165, 233), 2)
                 cv2.putText(img, t_str, (50, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (34, 197, 94), 2)
                 
                 if model:
                     try:
-                        img = run_detection(model, img)
+                        img, _ = run_detection(model, img)
                     except Exception:
                         pass
                 
@@ -452,11 +628,35 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
                     await asyncio.sleep(0.01)
                     continue
                 
+                detections = []
                 if model:
                     try:
-                        frame = run_detection(model, frame)
+                        frame, detections = run_detection(model, frame)
                     except Exception:
                         pass
+
+                zone = _camera_zones.get(camera_id)
+                if zone and detections:
+                    h, w = frame.shape[:2]
+                    intruders = check_zone_intrusion(detections, zone, w, h)
+                    if intruders:
+                        saved = save_intrusion_snapshot(frame, camera_id)
+                        if saved:
+                            try:
+                                await websocket.send_text(json.dumps({
+                                    "type": "zone_alert",
+                                    "camera_id": camera_id,
+                                    "intruders": [
+                                        {"label": i["label"], "confidence": round(i["confidence"], 2)}
+                                        for i in intruders
+                                    ],
+                                    "snapshot_path": saved,
+                                    "timestamp": datetime.now().isoformat(),
+                                }))
+                            except Exception:
+                                pass
+                if zone:
+                    frame = draw_zone_overlay(frame, zone)
                 
                 ret, buffer = cv2.imencode('.jpg', frame)
                 if ret:
