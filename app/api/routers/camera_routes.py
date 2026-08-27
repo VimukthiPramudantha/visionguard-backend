@@ -30,69 +30,23 @@ active_feeds = set()
 def get_detected_cameras() -> List[Camera]:
     detected = []
     
-    # detected.append(Camera(
-    #     id="cctv_1",
-    #     name="Camera 01",
-    #     type="cctv",
-    #     url="CCTV/Cam01",
-    #     status="online",
-    #     last_active=datetime.utcnow().isoformat(),
-    #     location="Front Gate"
-    # ))
-    # detected.append(Camera(
-    #     id="cctv_2",
-    #     name="Camera 02",
-    #     type="cctv",
-    #     url="CCTV/Cam02",
-    #     status="online",
-    #     last_active=datetime.utcnow().isoformat(),
-    #     location="Main Hall"
-    # ))
-    detected.append(Camera(
-        id="cctv_3",
-        name="Camera 03",
-        type="cctv",
-        url="CCTV/Cam03",
-        status="online",
-        last_active=datetime.utcnow().isoformat(),
-        location="Backyard"
-    ))
-    # detected.append(Camera(
-    #         id="cctv_4",
-    #         name="Camera 04",
-    #         type="cctv",
-    #         url="CCTV/Cam04",
-    #         status="online",
-    #         last_active=datetime.utcnow().isoformat(),
-    #         location="Road"
-    #     ))
-    detected.append(Camera(
-                id="cctv_5",
-                name="Camera 05",
-                type="cctv",
-                url="CCTV/Cam05",
-                status="online",
-                last_active=datetime.utcnow().isoformat(),
-                location="Parking"
-    ))
-    # detected.append(Camera(
-    #                 id="cctv_6",
-    #                 name="Camera 06",
-    #                 type="cctv",
-    #                 url="CCTV/Cam06",
-    #                 status="online",
-    #                 last_active=datetime.utcnow().isoformat(),
-    #                 location="Traffic"
-    # ))
-    detected.append(Camera(
-                        id="cctv_7",
-                        name="Camera 07",
-                        type="cctv",
-                        url="CCTV/Cam07",
-                        status="online",
-                        last_active=datetime.utcnow().isoformat(),
-                        location="Human"
-        ))
+    detected.append(Camera( id="cctv_1", name="Camera 01", type="cctv", url="CCTV/Cam01", status="online", last_active=datetime.utcnow().isoformat(), location="Front Gate" ))
+
+    # detected.append(Camera( id="cctv_2", name="Camera 02", type="cctv", url="CCTV/Cam02", status="online", last_active=datetime.utcnow().isoformat(), location="Main Hall" ))
+
+    # detected.append(Camera( id="cctv_3", name="Camera 03", type="cctv", url="CCTV/Cam03", status="online", last_active=datetime.utcnow().isoformat(), location="Backyard"))
+
+    # detected.append(Camera( id="cctv_4", name="Camera 04", type="cctv", url="CCTV/Cam04", status="online", last_active=datetime.utcnow().isoformat(), location="Road" ))
+
+    # detected.append(Camera( id="cctv_5", name="Camera 05", type="cctv", url="CCTV/Cam05", status="online", last_active=datetime.utcnow().isoformat(),location="Parking" ))
+
+    # detected.append(Camera( id="cctv_6", name="Camera 06", type="cctv", url="CCTV/Cam06", status="online", last_active=datetime.utcnow().isoformat(), location="Traffic" ))
+
+    # detected.append(Camera( id="cctv_7",name="Camera 07", type="cctv", url="CCTV/Cam07", status="online", last_active=datetime.utcnow().isoformat(), location="Human" ))
+    
+    detected.append(Camera( id="cctv_8",name="Test Cam 01", type="cctv", url="CCTV/TestCam01", status="online", last_active=datetime.utcnow().isoformat(), location="Mark For Vehicle" ))
+
+    detected.append(Camera( id="cctv_9",name="Test Cam 02", type="cctv", url="CCTV/TestCam02", status="online", last_active=datetime.utcnow().isoformat(), location="Mark For Human" ))
     
 
         
