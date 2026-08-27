@@ -12,13 +12,16 @@ from app.api.routers.auth_router import router as auth_router
 from app.api.routers.face_recognition import router as face_router
 
 try:
-    from app.api.routers.camera_routes import router as camera_router
+    from app.api.routers.camera import router as camera_router
 except ImportError:
     try:
-        from app.api.camera_routes import router as camera_router
+        from app.api.routers.camera_routes import router as camera_router
     except ImportError:
-        camera_router = None
-        print("camera_router not found - skipping for now")
+        try:
+            from app.api.camera_routes import router as camera_router
+        except ImportError:
+            camera_router = None
+            print("camera_router not found - skipping for now")
 
 app = FastAPI(title="VisionGuard")
 
@@ -45,5 +48,13 @@ else:
 @app.get("/")
 async def root():
     return {"message": "VisionGuard API is running successfully!"}
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from app.core.db_service import sync_hardcoded_cameras
+        sync_hardcoded_cameras()
+    except Exception as e:
+        print(f"[VisionGuard] Startup camera sync failed: {e}")
 
 print("VisionGuard Backend started successfully!")
