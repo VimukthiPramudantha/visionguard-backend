@@ -1,9 +1,9 @@
-import os
 import cv2
 import numpy as np
 import time as _time
 from datetime import datetime
 from app.api.routers.camera.state import _zone_snapshot_cooldowns, ZONE_SNAPSHOT_COOLDOWN_SECS
+from app.core.db_service import upload_snapshot, save_detection_event
 
 def _denormalize_zone(zone_points, frame_w, frame_h):
     return np.array(
@@ -25,7 +25,8 @@ def check_zone_intrusion(detections, zone_points, frame_w, frame_h):
             intruders.append(det)
     return intruders
 
-def save_intrusion_snapshot(frame, camera_id):
+def save_intrusion_snapshot(frame, camera_id, intruders=None, user_id=None):
+
     now = _time.time()
     last = _zone_snapshot_cooldowns.get(camera_id, 0)
     if now - last < ZONE_SNAPSHOT_COOLDOWN_SECS:
@@ -33,18 +34,27 @@ def save_intrusion_snapshot(frame, camera_id):
 
     _zone_snapshot_cooldowns[camera_id] = now
 
-    dt = datetime.now()
-    time_folder = dt.strftime("%H-%M-%S")
-    date_file = dt.strftime("%Y-%m-%d")
+    snapshot_url = upload_snapshot(frame, camera_id)
 
-    backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-    save_dir = os.path.join(backend_root, "snapshots", "Detect", camera_id, time_folder)
-    os.makedirs(save_dir, exist_ok=True)
+    if intruders and snapshot_url:
+        for intruder in intruders:
+            save_detection_event(
+                camera_id=camera_id,
+                detection_type=intruder.get("label", "unknown"),
+                confidence=intruder.get("confidence", 0.0),
+                snapshot_url=snapshot_url,
+                user_id=user_id,
+            )
+    elif snapshot_url:
+        save_detection_event(
+            camera_id=camera_id,
+            detection_type="unknown",
+            confidence=0.0,
+            snapshot_url=snapshot_url,
+            user_id=user_id,
+        )
 
-    save_path = os.path.join(save_dir, f"{date_file}.jpg")
-    cv2.imwrite(save_path, frame)
-    print(f"[VisionGuard] Intrusion snapshot saved → {save_path}")
-    return save_path
+    return snapshot_url
 
 def draw_zone_overlay(frame, zone_points):
     if not zone_points or len(zone_points) < 3:

@@ -20,6 +20,7 @@ from app.api.routers.camera.state import (
 )
 from app.api.routers.camera.detection import get_yolo_model, run_detection
 from app.api.routers.camera.utils import check_zone_intrusion, save_intrusion_snapshot, draw_zone_overlay
+from app.core.db_service import upsert_camera, save_zone_points as db_save_zone, delete_zone_points as db_delete_zone
 
 router = APIRouter()
 
@@ -30,8 +31,20 @@ async def get_all_cameras():
 
 @router.post("/cameras", response_model=Camera)
 async def add_camera(camera: CameraCreate):
-    """Add new camera to memory (no database)"""
     cam_id = f"custom_{len(_in_memory_cameras) + 1}"
+    cam_data = {
+        "id": cam_id,
+        "name": camera.name,
+        "type": camera.type,
+        "url": camera.url or "0",
+        "location": camera.location or "Custom Location",
+        "status": "online",
+    }
+    if camera.user_id:
+        cam_data["user_id"] = camera.user_id
+
+    upsert_camera(cam_data)
+
     new_cam = Camera(
         id=cam_id,
         name=camera.name,
@@ -39,7 +52,8 @@ async def add_camera(camera: CameraCreate):
         url=camera.url or "0",
         location=camera.location or "Custom Location",
         status="online",
-        last_active=datetime.utcnow().isoformat()
+        last_active=datetime.utcnow().isoformat(),
+        user_id=camera.user_id,
     )
     _in_memory_cameras[cam_id] = new_cam
     return new_cam
@@ -57,8 +71,10 @@ async def set_camera_zone(camera_id: str, payload: ZonePayload):
     cameras = get_detected_cameras()
     if not any(c.id == camera_id for c in cameras):
         raise HTTPException(status_code=404, detail="Camera not found")
-    _camera_zones[camera_id] = [p.model_dump() for p in payload.points]
-    return {"status": "ok", "camera_id": camera_id, "points": _camera_zones[camera_id]}
+    points = [p.model_dump() for p in payload.points]
+    _camera_zones[camera_id] = points
+    db_save_zone(camera_id, points)
+    return {"status": "ok", "camera_id": camera_id, "points": points}
 
 @router.get("/cameras/{camera_id}/zone")
 async def get_camera_zone(camera_id: str):
@@ -68,6 +84,7 @@ async def get_camera_zone(camera_id: str):
 @router.delete("/cameras/{camera_id}/zone")
 async def delete_camera_zone(camera_id: str):
     _camera_zones.pop(camera_id, None)
+    db_delete_zone(camera_id)
     return {"status": "ok", "camera_id": camera_id}
 
 @router.get("/cameras/{camera_id}/feed")
@@ -144,7 +161,7 @@ def get_camera_feed(camera_id: str):
                                 h, w = frame.shape[:2]
                                 intruders = check_zone_intrusion(detections, zone, w, h)
                                 if intruders:
-                                    save_intrusion_snapshot(frame, camera_id)
+                                    save_intrusion_snapshot(frame, camera_id, intruders=intruders)
                             if zone:
                                 frame = draw_zone_overlay(frame, zone)
 
@@ -228,7 +245,7 @@ def get_camera_feed(camera_id: str):
                                 h, w = frame.shape[:2]
                                 intruders = check_zone_intrusion(detections, zone, w, h)
                                 if intruders:
-                                    save_intrusion_snapshot(frame, camera_id)
+                                    save_intrusion_snapshot(frame, camera_id, intruders=intruders)
                             if zone:
                                 frame = draw_zone_overlay(frame, zone)
 
@@ -355,7 +372,7 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
                             h, w = frame.shape[:2]
                             intruders = check_zone_intrusion(detections, zone, w, h)
                             if intruders:
-                                saved = save_intrusion_snapshot(frame, camera_id)
+                                saved = save_intrusion_snapshot(frame, camera_id, intruders=intruders)
                                 if saved:
                                     try:
                                         await websocket.send_text(json.dumps({
@@ -442,7 +459,7 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
                     h, w = frame.shape[:2]
                     intruders = check_zone_intrusion(detections, zone, w, h)
                     if intruders:
-                        saved = save_intrusion_snapshot(frame, camera_id)
+                        saved = save_intrusion_snapshot(frame, camera_id, intruders=intruders)
                         if saved:
                             try:
                                 await websocket.send_text(json.dumps({

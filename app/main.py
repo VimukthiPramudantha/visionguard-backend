@@ -49,4 +49,12 @@ else:
 async def root():
     return {"message": "VisionGuard API is running successfully!"}
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from app.core.db_service import sync_hardcoded_cameras
+        sync_hardcoded_cameras()
+    except Exception as e:
+        print(f"[VisionGuard] Startup camera sync failed: {e}")
+
 print("VisionGuard Backend started successfully!")
