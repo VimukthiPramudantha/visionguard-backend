@@ -1,7 +1,4 @@
 # app/core/db_service.py
-"""
-Supabase DB + Storage service layer for cameras and detection events.
-"""
 import cv2
 import json
 from datetime import datetime, timezone
@@ -11,7 +8,6 @@ STORAGE_BUCKET = "detection-snapshots"
 
 
 def upsert_camera(camera_data: dict) -> dict:
-    """Insert or update a camera record in the cameras table."""
     camera_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     if "created_at" not in camera_data:
         camera_data["created_at"] = datetime.now(timezone.utc).isoformat()
@@ -26,13 +22,11 @@ def upsert_camera(camera_data: dict) -> dict:
 
 
 def get_all_cameras() -> list:
-    """Fetch all cameras from the cameras table."""
     response = supabase.table("cameras").select("*").execute()
     return response.data or []
 
 
 def get_camera_by_id(camera_id: str) -> dict | None:
-    """Fetch a single camera by ID."""
     response = (
         supabase.table("cameras")
         .select("*")
@@ -45,7 +39,6 @@ def get_camera_by_id(camera_id: str) -> dict | None:
 
 
 def save_zone_points(camera_id: str, points: list) -> None:
-    """Update zone_points for a camera in the database."""
     supabase.table("cameras").update({
         "zone_points": json.dumps(points),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -53,7 +46,6 @@ def save_zone_points(camera_id: str, points: list) -> None:
 
 
 def delete_zone_points(camera_id: str) -> None:
-    """Clear zone_points for a camera in the database."""
     supabase.table("cameras").update({
         "zone_points": json.dumps([]),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -90,8 +82,6 @@ HARDCODED_CAMERAS = [
 
 
 def sync_hardcoded_cameras() -> None:
-    """Ensure hardcoded CCTV cameras exist in the database.
-    Uses upsert so existing records are updated without losing zone_points."""
     for cam in HARDCODED_CAMERAS:
         existing = get_camera_by_id(cam["id"])
         if existing:
@@ -115,8 +105,6 @@ def sync_hardcoded_cameras() -> None:
     print("[VisionGuard] Hardcoded cameras synced to database")
 
 def upload_snapshot(frame, camera_id: str) -> str | None:
-    """Encode frame to JPEG and upload to Supabase Storage.
-    Returns the public URL of the uploaded snapshot, or None on failure."""
     try:
         ret, buffer = cv2.imencode('.jpg', frame)
         if not ret:
@@ -187,9 +175,6 @@ def save_detection_event(
         print(f"[VisionGuard] Failed to save detection event: {e}")
         return None
 
-
-# ── Alert helpers ────────────────────────────────────────────────
-
 def create_alert(
     user_id: str,
     camera_id: str,
@@ -255,7 +240,6 @@ def get_unread_alert_count(user_id: str) -> int:
 
 
 def mark_alert_read(alert_id: str) -> dict | None:
-    """Update an alert's status to 'read'."""
     try:
         response = (
             supabase.table("alerts")
@@ -269,3 +253,12 @@ def mark_alert_read(alert_id: str) -> dict | None:
     except Exception as e:
         print(f"[VisionGuard] Failed to mark alert as read: {e}")
         return None
+
+
+def delete_alert(alert_id: str) -> bool:
+    try:
+        response = supabase.table("alerts").delete().eq("id", alert_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"[VisionGuard] Failed to delete alert {alert_id}: {e}")
+        return False
