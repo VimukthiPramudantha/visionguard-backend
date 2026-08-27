@@ -55,6 +55,8 @@ async def register(user: UserCreate):
     return {**created_user, "password_hash": None}
 
 
+from app.core.security import create_access_token
+
 @router.post("/login")
 async def login(user: UserLogin):
     response = supabase.table("users").select("*").eq("email", user.email.lower()).execute()
@@ -73,8 +75,12 @@ async def login(user: UserLogin):
             detail="Invalid credentials"
         )
 
+    access_token = create_access_token(data={"sub": db_user["id"], "role": db_user.get("role", "user")})
+
     return {
         "message": "Login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
         "user": {
             "id": db_user["id"],
             "email": db_user["email"],
@@ -86,7 +92,6 @@ async def login(user: UserLogin):
 
 @router.get("/me")
 async def get_current_user(email: str):
-    """Temporary endpoint - will be replaced with JWT later"""
     response = supabase.table("users").select("id, email, full_name, role, created_at, updated_at")\
         .eq("email", email.lower()).execute()
     

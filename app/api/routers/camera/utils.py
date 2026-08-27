@@ -36,6 +36,16 @@ def save_intrusion_snapshot(frame, camera_id, intruders=None, user_id=None):
 
     snapshot_url = upload_snapshot(frame, camera_id)
 
+    if not user_id:
+        from app.core.db_service import get_camera_by_id
+        cam = get_camera_by_id(camera_id)
+        if cam:
+            user_id = cam.get("user_id")
+    
+    if not user_id:
+        print(f"[VisionGuard] Cannot save detection event for camera {camera_id}: No associated user owner found.")
+        return snapshot_url
+
     if intruders and snapshot_url:
         for intruder in intruders:
             save_detection_event(
