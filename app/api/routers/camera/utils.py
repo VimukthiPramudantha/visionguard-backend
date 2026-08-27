@@ -41,10 +41,19 @@ def save_intrusion_snapshot(frame, camera_id, intruders=None, user_id=None):
         cam = get_camera_by_id(camera_id)
         if cam:
             user_id = cam.get("user_id")
-    
+
     if not user_id:
-        print(f"[VisionGuard] Cannot save detection event for camera {camera_id}: No associated user owner found.")
-        return snapshot_url
+        try:
+            from app.core.supabase import supabase
+            users_res = supabase.table("users").select("id").limit(1).execute()
+            if users_res.data:
+                user_id = users_res.data[0]["id"]
+        except Exception as err:
+            print(f"[VisionGuard] Failed to fetch fallback user from DB: {err}")
+
+    if not user_id:
+        user_id = "00000000-0000-0000-0000-000000000000"
+        print(f"[VisionGuard] Warning: Using default fallback system user_id for camera {camera_id}")
 
     if intruders and snapshot_url:
         for intruder in intruders:
