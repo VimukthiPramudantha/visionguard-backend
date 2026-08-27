@@ -12,13 +12,16 @@ from app.api.routers.auth_router import router as auth_router
 from app.api.routers.face_recognition import router as face_router
 
 try:
-    from app.api.routers.camera_routes import router as camera_router
+    from app.api.routers.camera import router as camera_router
 except ImportError:
     try:
-        from app.api.camera_routes import router as camera_router
+        from app.api.routers.camera_routes import router as camera_router
     except ImportError:
-        camera_router = None
-        print("camera_router not found - skipping for now")
+        try:
+            from app.api.camera_routes import router as camera_router
+        except ImportError:
+            camera_router = None
+            print("camera_router not found - skipping for now")
 
 app = FastAPI(title="VisionGuard")
 

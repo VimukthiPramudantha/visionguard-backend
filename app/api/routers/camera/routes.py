@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict
 from datetime import datetime
 import asyncio
@@ -7,71 +7,21 @@ import cv2
 import numpy as np
 import base64
 import os
-import time as _time
+import time
 import json
 
+from app.schemas.camera import Camera, CameraCreate, ZonePayload
+from app.api.routers.camera.state import (
+    _in_memory_cameras,
+    active_feeds,
+    _camera_zones,
+    _zone_snapshot_cooldowns,
+    get_detected_cameras
+)
+from app.api.routers.camera.detection import get_yolo_model, run_detection
+from app.api.routers.camera.utils import check_zone_intrusion, save_intrusion_snapshot, draw_zone_overlay
+
 router = APIRouter()
-
-class Camera(BaseModel):
-    id: str
-    name: str
-    type: str  
-    url: Optional[str] = None
-    status: str
-    last_active: Optional[str] = None
-    location: Optional[str] = None
-
-class CameraCreate(BaseModel):
-    name: str
-    type: str
-    url: Optional[str] = None
-    location: Optional[str] = None
-
-_in_memory_cameras = {}
-active_feeds = set()
-
-_camera_zones: Dict[str, list] = {}
-
-_zone_snapshot_cooldowns: Dict[str, float] = {}
-ZONE_SNAPSHOT_COOLDOWN_SECS = 10
-
-
-class ZonePoint(BaseModel):
-    x: float
-    y: float
-
-
-class ZonePayload(BaseModel):
-    points: List[ZonePoint]
-
-def get_detected_cameras() -> List[Camera]:
-    detected = []
-    
-    detected.append(Camera( id="cctv_1", name="Camera 01", type="cctv", url="CCTV/Cam01", status="online", last_active=datetime.utcnow().isoformat(), location="Front Gate" ))
-
-    # detected.append(Camera( id="cctv_2", name="Camera 02", type="cctv", url="CCTV/Cam02", status="online", last_active=datetime.utcnow().isoformat(), location="Main Hall" ))
-
-    # detected.append(Camera( id="cctv_3", name="Camera 03", type="cctv", url="CCTV/Cam03", status="online", last_active=datetime.utcnow().isoformat(), location="Backyard"))
-
-    # detected.append(Camera( id="cctv_4", name="Camera 04", type="cctv", url="CCTV/Cam04", status="online", last_active=datetime.utcnow().isoformat(), location="Road" ))
-
-    # detected.append(Camera( id="cctv_5", name="Camera 05", type="cctv", url="CCTV/Cam05", status="online", last_active=datetime.utcnow().isoformat(),location="Parking" ))
-
-    # detected.append(Camera( id="cctv_6", name="Camera 06", type="cctv", url="CCTV/Cam06", status="online", last_active=datetime.utcnow().isoformat(), location="Traffic" ))
-
-    # detected.append(Camera( id="cctv_7",name="Camera 07", type="cctv", url="CCTV/Cam07", status="online", last_active=datetime.utcnow().isoformat(), location="Human" ))
-    
-    detected.append(Camera( id="cctv_8",name="Test Cam 01", type="cctv", url="CCTV/TestCam01", status="online", last_active=datetime.utcnow().isoformat(), location="Mark For Vehicle" ))
-
-    detected.append(Camera( id="cctv_9",name="Test Cam 02", type="cctv", url="CCTV/TestCam02", status="online", last_active=datetime.utcnow().isoformat(), location="Mark For Human" ))
-    
-
-        
-    for cam_id, cam in _in_memory_cameras.items():
-        if not any(d.id == cam_id for d in detected):
-            detected.append(cam)
-            
-    return detected
 
 @router.get("/cameras", response_model=List[Camera])
 async def get_all_cameras():
@@ -102,16 +52,6 @@ async def get_camera(camera_id: str):
             return cam
     raise HTTPException(status_code=404, detail="Camera not found")
 
-_yolo_model = None
-
-_VEHICLE_CLASSES = {"bicycle", "bus", "car", "motorbike", "truck"}
-
-_BOX_COLORS = {
-    "vehicle": (0, 140, 255),   
-    "person":  (0, 220, 100),   
-}
-
-
 @router.post("/cameras/{camera_id}/zone")
 async def set_camera_zone(camera_id: str, payload: ZonePayload):
     cameras = get_detected_cameras()
@@ -120,154 +60,18 @@ async def set_camera_zone(camera_id: str, payload: ZonePayload):
     _camera_zones[camera_id] = [p.model_dump() for p in payload.points]
     return {"status": "ok", "camera_id": camera_id, "points": _camera_zones[camera_id]}
 
-
 @router.get("/cameras/{camera_id}/zone")
 async def get_camera_zone(camera_id: str):
     zone = _camera_zones.get(camera_id)
     return {"camera_id": camera_id, "points": zone}
-
 
 @router.delete("/cameras/{camera_id}/zone")
 async def delete_camera_zone(camera_id: str):
     _camera_zones.pop(camera_id, None)
     return {"status": "ok", "camera_id": camera_id}
 
-
-def _denormalize_zone(zone_points, frame_w, frame_h):
-    return np.array(
-        [[int(p["x"] * frame_w), int(p["y"] * frame_h)] for p in zone_points],
-        dtype=np.int32,
-    )
-
-
-def check_zone_intrusion(detections, zone_points, frame_w, frame_h):
-    if not zone_points or len(zone_points) < 3:
-        return []
-
-    poly = _denormalize_zone(zone_points, frame_w, frame_h).reshape((-1, 1, 2))
-    intruders = []
-    for det in detections:
-        cx = (det["x1"] + det["x2"]) // 2
-        cy = (det["y1"] + det["y2"]) // 2
-        dist = cv2.pointPolygonTest(poly, (float(cx), float(cy)), False)
-        if dist >= 0:  
-            intruders.append(det)
-    return intruders
-
-
-def save_intrusion_snapshot(frame, camera_id):
-    now = _time.time()
-    last = _zone_snapshot_cooldowns.get(camera_id, 0)
-    if now - last < ZONE_SNAPSHOT_COOLDOWN_SECS:
-        return None  
-
-    _zone_snapshot_cooldowns[camera_id] = now
-
-    dt = datetime.now()
-    time_folder = dt.strftime("%H-%M-%S")
-    date_file = dt.strftime("%Y-%m-%d")
-
-    backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    save_dir = os.path.join(backend_root, "snapshots", "Detect", camera_id, time_folder)
-    os.makedirs(save_dir, exist_ok=True)
-
-    save_path = os.path.join(save_dir, f"{date_file}.jpg")
-    cv2.imwrite(save_path, frame)
-    print(f"[VisionGuard] Intrusion snapshot saved → {save_path}")
-    return save_path
-
-
-def draw_zone_overlay(frame, zone_points):
-    if not zone_points or len(zone_points) < 3:
-        return frame
-    h, w = frame.shape[:2]
-    poly = _denormalize_zone(zone_points, w, h)
-    overlay = frame.copy()
-    cv2.fillPoly(overlay, [poly], (0, 200, 255, 80))
-    cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
-    cv2.polylines(frame, [poly], True, (0, 200, 255), 2, cv2.LINE_AA)
-    return frame
-
-
-def get_yolo_model():
-    global _yolo_model
-    if _yolo_model is None:
-        try:
-            from ultralytics import YOLO
-            model_path = r"d:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train\weights\best.pt"
-            import os
-            if os.path.exists(model_path):
-                _yolo_model = YOLO(model_path)
-                print(f"[VisionGuard] Model loaded. Classes: {_yolo_model.names}")
-            else:
-                print(f"YOLO model not found at {model_path}")
-                _yolo_model = False
-        except ImportError as e:
-            import sys
-            print(f"ultralytics import failed: {e}")
-            print(f"Python path: {sys.path}")
-            print(f"Python executable: {sys.executable}")
-            _yolo_model = False
-        except Exception as e:
-            print(f"Failed to load YOLO: {e}")
-            _yolo_model = False
-    return _yolo_model if _yolo_model is not False else None
-
-
-def run_detection(model, frame):
-    import cv2
-
-    results = model(
-        frame,
-        conf=0.45,
-        iou=0.35,
-        augment=False,
-        imgsz=640,
-        device=0,
-        verbose=False,
-    )
-
-    annotated = frame.copy()
-    detections = []
-    for box in results[0].boxes:
-        cls_id   = int(box.cls[0])
-        conf_val = float(box.conf[0])
-        raw_name = model.names[cls_id]
-
-        label = "vehicle" if raw_name in _VEHICLE_CLASSES else "person"
-        color = _BOX_COLORS.get(label, (200, 200, 200))
-
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-
-        detections.append({
-            "label": label,
-            "confidence": conf_val,
-            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-        })
-
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-
-        text = f"{label} {conf_val:.2f}"
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-        cv2.rectangle(annotated, (x1, y1 - th - 8), (x1 + tw + 6, y1), color, -1)
-        cv2.putText(
-            annotated, text,
-            (x1 + 3, y1 - 5),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-            (0, 0, 0), 1, cv2.LINE_AA,
-        )
-
-    return annotated, detections
-
-
 @router.get("/cameras/{camera_id}/feed")
 def get_camera_feed(camera_id: str):
-    from fastapi.responses import StreamingResponse
-    import cv2
-    import numpy as np
-    import time
-    import os
-
     cameras = get_detected_cameras()
     camera = next((c for c in cameras if c.id == camera_id), None)
     if not camera:
@@ -281,7 +85,7 @@ def get_camera_feed(camera_id: str):
         try:
             model = get_yolo_model()
             if is_cctv:
-                backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
                 cam_path = os.path.join(backend_root, camera.url)
                 
                 if os.path.exists(cam_path) and os.path.isdir(cam_path):
@@ -443,7 +247,6 @@ def get_camera_feed(camera_id: str):
 
 @router.websocket("/cameras/{camera_id}/ws")
 async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
-
     await websocket.accept()
     
     cameras = get_detected_cameras()
@@ -501,8 +304,7 @@ async def websocket_camera_feed(websocket: WebSocket, camera_id: str):
         model = get_yolo_model()
         
         if is_cctv:
-            import os
-            backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
             cam_path = os.path.join(backend_root, camera.url)
             if os.path.exists(cam_path) and os.path.isdir(cam_path):
                 video_files = sorted([
