@@ -108,4 +108,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: tracktrack.yaml
-save_dir: D:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train
+save_dir: H:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train

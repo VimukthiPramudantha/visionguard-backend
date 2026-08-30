@@ -3,6 +3,7 @@ venv/
 .venv/
 .env
 ENV/
+venv311/
 
 # YOLO & PyTorch Datasets
 dataset/
