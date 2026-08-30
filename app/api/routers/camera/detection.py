@@ -13,7 +13,7 @@ def get_yolo_model():
     if _yolo_model is None:
         try:
             from ultralytics import YOLO
-            model_path = r"d:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train\weights\best.pt"
+            model_path = r"h:\Projects\VisionGuard\visionguard-backend\runs\detect\combined_train\weights\best.pt"
             if os.path.exists(model_path):
                 _yolo_model = YOLO(model_path)
                 print(f"[VisionGuard] Model loaded. Classes: {_yolo_model.names}")
@@ -32,14 +32,15 @@ def get_yolo_model():
 
 def run_detection(model, frame):
     import cv2
-
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     results = model(
         frame,
         conf=0.45,
         iou=0.35,
         augment=False,
         imgsz=640,
-        device=0,
+        device=device,
         verbose=False,
     )
 

@@ -20,7 +20,7 @@ from app.api.routers.camera.state import (
 )
 from app.api.routers.camera.detection import get_yolo_model, run_detection
 from app.api.routers.camera.utils import check_zone_intrusion, save_intrusion_snapshot, draw_zone_overlay
-from app.core.db_service import upsert_camera, save_zone_points as db_save_zone, delete_zone_points as db_delete_zone
+from app.core.db_service import upsert_camera, save_zone_points as db_save_zone, delete_zone_points as db_delete_zone, delete_camera as db_delete_camera
 
 router = APIRouter()
 
@@ -65,6 +65,27 @@ async def get_camera(camera_id: str):
         if cam.id == camera_id:
             return cam
     raise HTTPException(status_code=404, detail="Camera not found")
+
+@router.delete("/cameras/{camera_id}")
+async def remove_camera(camera_id: str):
+    """Remove a camera from the system."""
+    cameras = get_detected_cameras()
+    if not any(c.id == camera_id for c in cameras):
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    # Remove from database
+    deleted = db_delete_camera(camera_id)
+
+    # Clean up in-memory state
+    _in_memory_cameras.pop(camera_id, None)
+    _camera_zones.pop(camera_id, None)
+    _zone_snapshot_cooldowns.pop(camera_id, None)
+    active_feeds.discard(camera_id)
+
+    if not deleted:
+        raise HTTPException(status_code=500, detail="Failed to delete camera from database")
+
+    return {"status": "ok", "camera_id": camera_id, "message": "Camera removed successfully"}
 
 @router.post("/cameras/{camera_id}/zone")
 async def set_camera_zone(camera_id: str, payload: ZonePayload):

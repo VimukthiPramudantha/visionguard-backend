@@ -23,6 +23,8 @@ except ImportError:
             camera_router = None
             print("camera_router not found - skipping for now")
 
+from app.api.routers.alerts_router import router as alerts_router
+
 app = FastAPI(title="VisionGuard")
 
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +41,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(face_router)
+app.include_router(alerts_router, prefix="/alerts", tags=["alerts"])
 
 if camera_router:
     app.include_router(camera_router, tags=["camera"])

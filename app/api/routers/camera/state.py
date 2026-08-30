@@ -8,12 +8,24 @@ _in_memory_cameras = {}
 active_feeds = set()
 _camera_zones: Dict[str, list] = {}
 _zone_snapshot_cooldowns: Dict[str, float] = {}
-ZONE_SNAPSHOT_COOLDOWN_SECS = 600  
+ZONE_SNAPSHOT_COOLDOWN_SECS = 600
+
+GLOBAL_SETTINGS = {
+    "notifications_enabled": True,
+    "two_factor_enabled": False,
+    "detection_confidence": 0.45,
+    "auto_save_snapshots": True,
+    "alert_sensitivity": "Medium",
+}
+
+def update_detection_settings(new_settings: dict):
+    for key in GLOBAL_SETTINGS:
+        if key in new_settings:
+            GLOBAL_SETTINGS[key] = new_settings[key]
 
 _hardcoded_synced = False
 
 def _ensure_hardcoded_synced():
-    """Sync hardcoded cameras to DB on first call."""
     global _hardcoded_synced
     if not _hardcoded_synced:
         try:

@@ -55,6 +55,8 @@ async def register(user: UserCreate):
     return {**created_user, "password_hash": None}
 
 
+from app.core.security import create_access_token
+
 @router.post("/login")
 async def login(user: UserLogin):
     response = supabase.table("users").select("*").eq("email", user.email.lower()).execute()
@@ -73,8 +75,12 @@ async def login(user: UserLogin):
             detail="Invalid credentials"
         )
 
+    access_token = create_access_token(data={"sub": db_user["id"], "role": db_user.get("role", "user")})
+
     return {
         "message": "Login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
         "user": {
             "id": db_user["id"],
             "email": db_user["email"],
@@ -86,12 +92,42 @@ async def login(user: UserLogin):
 
 @router.get("/me")
 async def get_current_user(email: str):
-    """Temporary endpoint - will be replaced with JWT later"""
-    response = supabase.table("users").select("id, email, full_name, role, created_at, updated_at")\
-        .eq("email", email.lower()).execute()
+    response = (
+        supabase.table("users")
+        .select("id, email, full_name, role, created_at, updated_at")
+        .eq("email", email.lower())
+        .execute()
+    )
     
     if not response.data:
         raise HTTPException(status_code=404, detail="User not found")
         
     user = response.data[0]
     return {**user, "password_hash": None}
+
+
+@router.put("/me")
+async def update_current_user(email: str, full_name: str):
+    response = supabase.table("users").update({
+        "full_name": full_name.strip(),
+        "updated_at": datetime.utcnow().isoformat()
+    }).eq("email", email.lower()).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    user = response.data[0]
+    return {**user, "password_hash": None}
+
+
+from app.api.routers.camera.state import GLOBAL_SETTINGS, update_detection_settings
+
+@router.get("/settings")
+async def get_settings():
+    return GLOBAL_SETTINGS
+
+
+@router.put("/settings")
+async def update_settings(settings: dict):
+    update_detection_settings(settings)
+    return GLOBAL_SETTINGS
