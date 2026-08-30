@@ -42,7 +42,7 @@ class VisionGuardDetector:
             results = self.model.predict(
                 source=frame,
                 conf=self.conf,
-                verbose=True,          # ← More detailed output
+                verbose=True,          
                 save=False
             )[0]
 
@@ -65,5 +65,5 @@ class VisionGuardDetector:
                 print("    → No detections")
 
 if __name__ == "__main__":
-    detector = VisionGuardDetector(conf=0.15)   # Very low threshold for debugging
+    detector = VisionGuardDetector(conf=0.15)   
     detector.process_images()
