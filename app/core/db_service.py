@@ -38,6 +38,15 @@ def get_camera_by_id(camera_id: str) -> dict | None:
     return None
 
 
+def delete_camera(camera_id: str) -> bool:
+    try:
+        response = supabase.table("cameras").delete().eq("id", camera_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        print(f"[VisionGuard] Failed to delete camera {camera_id}: {e}")
+        return False
+
+
 def save_zone_points(camera_id: str, points: list) -> None:
     supabase.table("cameras").update({
         "zone_points": json.dumps(points),
@@ -153,15 +162,16 @@ def save_detection_event(
         if response.data:
             saved_event = response.data[0]
 
-            alert_user_id = user_id
-            if not alert_user_id:
-                cam = get_camera_by_id(camera_id)
-                if cam:
-                    alert_user_id = cam.get("user_id")
+            try:
+                users_res = supabase.table("users").select("id").execute()
+                user_ids = [u["id"] for u in users_res.data] if users_res.data else []
+            except Exception as err:
+                print(f"[VisionGuard] Failed to fetch all users for alert: {err}")
+                user_ids = [user_id] if user_id else []
 
-            if alert_user_id:
+            for uid in user_ids:
                 create_alert(
-                    user_id=alert_user_id,
+                    user_id=uid,
                     camera_id=camera_id,
                     detection_event_id=saved_event.get("id"),
                     snapshot_url=snapshot_url,
