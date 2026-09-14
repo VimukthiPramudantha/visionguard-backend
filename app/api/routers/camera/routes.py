@@ -73,10 +73,8 @@ async def remove_camera(camera_id: str):
     if not any(c.id == camera_id for c in cameras):
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    # Remove from database
     deleted = db_delete_camera(camera_id)
 
-    # Clean up in-memory state
     _in_memory_cameras.pop(camera_id, None)
     _camera_zones.pop(camera_id, None)
     _zone_snapshot_cooldowns.pop(camera_id, None)

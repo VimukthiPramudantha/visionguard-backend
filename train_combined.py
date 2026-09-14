@@ -1,29 +1,3 @@
-#!/usr/bin/env python
-"""
-train_combined.py  —  VisionGuard Combined Dataset Trainer
-===========================================================
-Merges dataset/ and dataset2/ into a single combined dataset, then retrains
-the current model on it so the final weights contain knowledge from BOTH datasets.
-
-Class Mapping
--------------
-  Unified (6 classes): bicycle, bus, car, motorbike, person, truck
-  Dataset 1 (6):       bicycle(0), bus(1), car(2), motorbike(3), person(4), truck(5)
-                       -> already aligned, no remapping needed
-  Dataset 2 (5):       bus(0), car(1), motorcycle(2), person(3), truck(4)
-                       ->  0->1, 1->2, 2->3, 3->4, 4->5  (bicycle stays absent)
-
-Usage:
-    py train_combined.py                            # defaults
-    py train_combined.py --epochs 150 --batch 8
-    py train_combined.py --no-merge                 # skip merge, only train
-    py train_combined.py --merge-only               # only merge, skip training
-    py train_combined.py --device cpu
-
-Requirements:
-    py -m pip install ultralytics pyyaml
-"""
-
 import argparse
 import os
 import re
@@ -35,9 +9,6 @@ from pathlib import Path
 import torch
 from ultralytics import YOLO
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Paths
-# ─────────────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
 DATASET1_DIR = _SCRIPT_DIR / "dataset"
@@ -50,19 +21,10 @@ BASE_WEIGHTS    = _SCRIPT_DIR / "yolo11n.pt"
 
 _DEFAULT_OUT = str(_SCRIPT_DIR / "runs" / "detect")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Unified class definition
-# ─────────────────────────────────────────────────────────────────────────────
 UNIFIED_CLASSES = ["bicycle", "bus", "car", "motorbike", "person", "truck"]
 
-# Dataset 2 class index -> Unified class index
-# ds2: bus(0), car(1), motorcycle(2), person(3), truck(4)
 DS2_REMAP = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper utilities
-# ─────────────────────────────────────────────────────────────────────────────
 
 def print_banner() -> None:
     print("=" * 70)
@@ -89,17 +51,13 @@ def print_banner() -> None:
 
 
 def count_files(directory: Path, pattern: str = "*.*") -> int:
-    """Count files matching a glob pattern in a directory."""
     if not directory.exists():
         return 0
     return len(list(directory.glob(pattern)))
 
 
 def remap_label_file(src: Path, dst: Path, remap: dict) -> None:
-    """
-    Copy a YOLO label file from src to dst, remapping class indices.
-    Each line format: <class_id> <cx> <cy> <w> <h>
-    """
+
     lines_out = []
     with open(src, "r") as fh:
         for line in fh:
@@ -116,13 +74,8 @@ def remap_label_file(src: Path, dst: Path, remap: dict) -> None:
 
 
 def copy_label_unchanged(src: Path, dst: Path) -> None:
-    """Copy a label file without remapping."""
     shutil.copy2(src, dst)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset merge
-# ─────────────────────────────────────────────────────────────────────────────
 
 def merge_split(
     ds1_split_dir: Path,
@@ -131,10 +84,6 @@ def merge_split(
     ds2_remap: dict,
     split_name: str,
 ) -> tuple:
-    """
-    Merge a single split (train / valid / test) from both datasets.
-    Returns (count_ds1, count_ds2) of images copied.
-    """
     img_out = out_split_dir / "images"
     lbl_out = out_split_dir / "labels"
     img_out.mkdir(parents=True, exist_ok=True)
@@ -145,7 +94,6 @@ def merge_split(
     count_ds1 = 0
     count_ds2 = 0
 
-    # ── Dataset 1: copy images + labels unchanged ──────────────────────────
     ds1_img_dir = ds1_split_dir / "images"
     ds1_lbl_dir = ds1_split_dir / "labels"
 
@@ -160,12 +108,10 @@ def merge_split(
             if lbl_src.exists():
                 copy_label_unchanged(lbl_src, lbl_out / f"ds1_{lbl_src.name}")
             else:
-                # Create empty label file so YOLO doesn't complain
                 (lbl_out / f"ds1_{img_src.stem}.txt").touch()
 
             count_ds1 += 1
 
-    # ── Dataset 2: copy images + remap labels ─────────────────────────────
     ds2_img_dir = ds2_split_dir / "images"
     ds2_lbl_dir = ds2_split_dir / "labels"
 
@@ -192,7 +138,6 @@ def merge_split(
 
 
 def write_combined_yaml() -> None:
-    """Write the unified data.yaml for the combined dataset."""
     yaml_content = f"""# Combined dataset — dataset + dataset2
 # Unified class list ({len(UNIFIED_CLASSES)} classes)
 train: train/images
@@ -208,10 +153,6 @@ names: {UNIFIED_CLASSES}
 
 
 def merge_datasets(force: bool = False) -> None:
-    """
-    Merge dataset/ and dataset2/ into dataset_combined/.
-    Skips if already done, unless force=True.
-    """
     print("\n--- Dataset Merge ---")
 
     if COMBINED_DIR.exists() and not force:
@@ -257,18 +198,7 @@ def merge_datasets(force: bool = False) -> None:
         f"Total: ds1={total_ds1}  ds2={total_ds2}  combined={total_ds1 + total_ds2} images\n"
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Training
-# ─────────────────────────────────────────────────────────────────────────────
-
 def pick_weights(args):
-    """
-    Decide which weights to start from:
-    1. User-specified --model (custom path or YOLO hub name)
-    2. Existing trained best.pt (fine-tune on top of current model)
-    3. Default yolo11n.pt pretrained weights
-    """
     if args.model:
         return args.model
 
@@ -286,7 +216,6 @@ def pick_weights(args):
 
 
 def run_training(args) -> None:
-    """Load weights and train on the combined dataset."""
     if not COMBINED_YAML.exists():
         print(f"[-] Error: {COMBINED_YAML} not found. Run merge first (remove --no-merge).")
         sys.exit(1)
@@ -349,14 +278,12 @@ def run_training(args) -> None:
     print(f"  Results dir : {_DEFAULT_OUT}/{args.name}/")
     print("=" * 70)
 
-    # Copy best.pt -> models/trained/best.pt
     best_src = Path(_DEFAULT_OUT) / args.name / "weights" / "best.pt"
     dest_dir = _SCRIPT_DIR / "models" / "trained"
     dest_dir.mkdir(parents=True, exist_ok=True)
     best_dst = dest_dir / "best.pt"
 
     if best_src.exists():
-        # Backup previous model
         if best_dst.exists():
             backup = dest_dir / "best_prev.pt"
             shutil.copy2(best_dst, backup)
@@ -366,7 +293,6 @@ def run_training(args) -> None:
     else:
         print(f"[-] Warning: best.pt not found at {best_src}")
 
-    # ── Evaluation ────────────────────────────────────────────────────────
     print("\n--- Running Evaluation on Test Split ---")
     try:
         val_results = model.val(
@@ -394,17 +320,12 @@ def run_training(args) -> None:
     print("\nDone. ✓\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="VisionGuard — Combined Dataset Trainer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # ── Dataset merge options ──────────────────────────────────────────────
     merge_group = parser.add_argument_group("Dataset Merge Options")
     merge_group.add_argument(
         "--no-merge",
@@ -422,7 +343,6 @@ def parse_args():
         help="Force re-merge even if dataset_combined/ already exists",
     )
 
-    # ── Training options ───────────────────────────────────────────────────
     train_group = parser.add_argument_group("Training Options")
     train_group.add_argument(
         "--model",
@@ -452,7 +372,6 @@ def main() -> None:
     print_banner()
     args = parse_args()
 
-    # ── Step 1: Merge ──────────────────────────────────────────────────────
     if not args.no_merge:
         merge_datasets(force=args.force_merge)
     else:
@@ -461,8 +380,6 @@ def main() -> None:
     if args.merge_only:
         print("[*] --merge-only flag set. Stopping before training.")
         return
-
-    # ── Step 2: Train ─────────────────────────────────────────────────────
     run_training(args)
 
 

@@ -1,23 +1,3 @@
-#!/usr/bin/env python
-"""
-train.py  —  VisionGuard YOLOv11 Trainer
-==========================================
-Dataset  : Pedestrian and Vehicle (6 classes)
-Classes  : bicycle, bus, car, motorbike, person, truck
-Images   : ~1142 (train / val / test split)
-Hardware : CUDA GPU (auto-detected, optimised for GTX 1650)
-
-Usage:
-    py train_yolov11.py                              # defaults (batch=6, yolo11n)
-    py train_yolov11.py --batch 8 --epochs 150
-    py train_yolov11.py --model yolo11s.pt --resume
-    py train_yolov11.py --device cpu                 # force CPU
-
-Requirements:
-    py -m pip install ultralytics
-    py -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-"""
-
 import argparse
 import os
 import shutil
@@ -34,7 +14,6 @@ _DEFAULT_OUT  = str(_SCRIPT_DIR / "runs" / "detect")
 
 
 def check_environment() -> None:
-    """Print Python / PyTorch / CUDA info and abort if packages are missing."""
     print("=" * 70)
     print("           VisionGuard - YOLO11 Vehicle Training")
     print("=" * 70)
@@ -62,7 +41,6 @@ def check_environment() -> None:
 
 
 def check_paths() -> Path:
-    """Validate dataset YAML exists and ensure model directories are present."""
     yaml_path = _SCRIPT_DIR / "dataset" / "data.yaml"
 
     if not yaml_path.exists():
